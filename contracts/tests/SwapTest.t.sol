@@ -17,7 +17,8 @@ contract SwapTest is ExchangeTestBase {
             // 1000 USDT
             1000e6,
             596302900000000,
-            0x001463dff5f8da08ca226ba01f59722c62ad9b9b3eaa
+            0x001463dff5f8da08ca226ba01f59722c62ad9b9b3eaa,
+            testAddress
         );
         console.log("Liquidity Deposited...");
         vm.stopPrank();
@@ -34,24 +35,6 @@ contract SwapTest is ExchangeTestBase {
 
         // Get the balance USDT before the swap for the testAddress
         uint256 balanceBefore = usdt.balanceOf(testAddress);
-
-        // Reserve Liquidity
-        vm.startPrank(testAddress);
-        uint256[] memory vaultIndexesToReserve = new uint256[](1);
-        vaultIndexesToReserve[0] = 0;
-        uint192[] memory amountsToReserve = new uint192[](1);
-        amountsToReserve[0] = amountOut;
-        uint256[] memory noOverwrites = new uint256[](0);
-        riftExchange.reserveLiquidity(
-            msg.sender,
-            vaultIndexesToReserve,
-            amountsToReserve,
-            testAddress,
-            0,
-            noOverwrites
-        );
-
-        vm.stopPrank();
 
         // Propose a proof
         bytes memory proof = abi.encodePacked(hex"deadbeef");
@@ -76,9 +59,11 @@ contract SwapTest is ExchangeTestBase {
         vm.startPrank(hypernode1);
 
         vm.warp(1726339441);
+        uint256[] memory depositVaultIndexes = new uint256[](1);
+        depositVaultIndexes[0] = 0;
 
         riftExchange.submitSwapProof({
-            swapReservationIndex: 0,
+            depositVaultIndexes: depositVaultIndexes,
             bitcoinTxId: keccak256(hex"beef"),
             merkleRoot: keccak256(hex"dead"),
             safeBlockHeight: uint32(blockHeights[0]),
@@ -86,6 +71,8 @@ contract SwapTest is ExchangeTestBase {
             confirmationBlockHeight: blockHeights[6],
             blockHashes: subsetblockHashes,
             blockChainworks: subsetblockChainworks,
+            paymentRecipient: testAddress,
+            totalSwapOutputAmount: amountOut,
             proof: proof
         });
 
@@ -102,58 +89,5 @@ contract SwapTest is ExchangeTestBase {
         console.log("Balance before swap: ", balanceBefore);
         console.log("Balance after swap:  ", balance);
         assertEq(balance, amountOut - protocolFee, "Balance should be equal to amountOut");
-    }
-
-    function testSwapWithExpiredReservation() public {
-        // First, run the original test
-        depositLiquidity();
-        uint192 amountOut = 100e6;
-        uint256 protocolFee = uint256((amountOut * uint192(riftExchange.protocolFeeBP())) / 10000);
-        vm.startPrank(testAddress);
-        // Get some USDT for reservation fees, approve it for the exchange
-        //deal(address(usdt), testAddress, 3.1e6);
-        //usdt.approve(address(riftExchange), 3.1e6);
-
-        // Get the balance USDT before the swap for the testAddress
-        uint256 balanceBefore = usdt.balanceOf(testAddress);
-
-        // Reserve Liquidity
-        vm.startPrank(testAddress);
-        uint256[] memory vaultIndexesToReserve = new uint256[](1);
-        vaultIndexesToReserve[0] = 0;
-        uint192[] memory amountsToReserve = new uint192[](1);
-        amountsToReserve[0] = amountOut;
-        uint256[] memory noOverwrites = new uint256[](0);
-        riftExchange.reserveLiquidity(
-            msg.sender,
-            vaultIndexesToReserve,
-            amountsToReserve,
-            testAddress,
-            0,
-            noOverwrites
-        );
-
-        vm.stopPrank();
-
-        vm.warp(1726339441 + 60 * 60 * 5);
-        // Now this should be time expired
-
-        // Now, create a new reservation with the previous reservation index as expired
-        console.log("Unreserved balance v0 before withdraw: ", riftExchange.getDepositVault(0).unreservedBalance);
-        console.log("Reservation state 0: before withdraw", uint8(riftExchange.getReservation(0).state));
-
-        // Now, create a new reservation with the previous reservation index as expired
-
-        uint256[] memory expiredIndexes = new uint256[](1);
-        expiredIndexes[0] = 0; // The index of the previous reservation
-        vm.startPrank(lp1);
-        riftExchange.withdrawLiquidity(0, 1, expiredIndexes);
-        uint256 unreservedBalanceAfterWithdraw = riftExchange.getDepositVault(0).unreservedBalance;
-        console.log("Unreserved balance v0 after withdraw: ", riftExchange.getDepositVault(0).unreservedBalance);
-        console.log("Reservation state 0: after withdraw", uint8(riftExchange.getReservation(0).state));
-        vm.expectRevert(RESERVATION_NOT_EXPIRED);
-        riftExchange.withdrawLiquidity(0, 1, expiredIndexes);
-        console.log("Unreserved balance v0 after second withdraw: ", riftExchange.getDepositVault(0).unreservedBalance);
-        console.log("Reservation state 0: after second withdraw", uint8(riftExchange.getReservation(0).state));
     }
 }
