@@ -80,7 +80,7 @@ contract SwapTest is ExchangeTestBase {
         vm.warp(1726339441 + 600);
 
         // Release Liquidity
-        riftExchange.releaseLiquidity(0);
+        riftExchange.releaseLiquidity(0, depositVaultIndexes);
 
         vm.stopPrank();
 

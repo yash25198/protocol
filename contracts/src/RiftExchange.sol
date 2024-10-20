@@ -7,6 +7,8 @@ import {OwnableUpgradeable} from "@openzeppelin-upgradeable/access/OwnableUpgrad
 
 import {BlockHashStorageUpgradeable} from "./BlockHashStorageUpgradeable.sol";
 
+error LiquidityUnavailable();
+error InvalidDepositVaultIndexes();
 error InvalidExchangeRate();
 error ReservationNotExpired();
 error SwapNotProved();
@@ -370,29 +372,43 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
         emit ProofSubmitted(msg.sender, swaps.length, bitcoinTxId);
     }
 
-    function releaseLiquidity(uint256 swapIndex) public {
+    function releaseLiquidity(uint256 swapIndex, uint256[] memory depositVaultIndexes) public {
         // [0] retrieve swap order
         Swap storage swap = swaps[swapIndex];
 
-        // [1] validate swap proof has been submitted
+        // [1] make sure the deposit vault indexes are valid by checking the commitment
+        bytes32 depositVaultCommitment = keccak256(abi.encode(depositVaultIndexes));
+        if (swap.depositVaultCommitment != depositVaultCommitment) {
+            revert InvalidDepositVaultIndexes();
+        }
+
+        // [2] validate swap proof has been submitted
         if (swap.state != SwapState.Proved) {
             revert SwapNotProved();
         }
 
-        // [2] ensure challenge period has passed since proof submission
+        // [3] ensure challenge period has passed since proof submission
         if (block.timestamp < swap.liquidityUnlockedTimestamp) {
             revert StillInChallengePeriod();
         }
 
-        // [3] ensure swap block is still part of longest chain
+        // [4] ensure swap block is still part of longest chain
         if (getBlockHash(swap.proposedBlockHeight) != swap.proposedBlockHash) {
             revert OverwrittenProposedBlock();
         }
 
-        // [4] mark swap as completed
+        // [5] ensure each reserved deposit vault has not been reserved before, if it has not set it to zero
+        for (uint256 i = 0; i < depositVaultIndexes.length; i++) {
+            if (depositVaults[depositVaultIndexes[i]].vaultBalance == 0) {
+                revert LiquidityUnavailable();
+            }
+            depositVaults[depositVaultIndexes[i]].vaultBalance = 0;
+        }
+
+        // [6] mark swap as completed
         swap.state = SwapState.Completed;
 
-        // [5] release protocol fee
+        // [7] release protocol fee
         uint256 protocolFee = (swap.totalSwapOutputAmount * protocolFeeBP) / bpScale;
         if (protocolFee < minProtocolFee) {
             protocolFee = minProtocolFee;
@@ -404,7 +420,7 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
             revert TransferFailed();
         }
 
-        // [6] release funds to buyers ETH payout address
+        // [8] release funds to buyers ETH payout address
         if (!depositToken.transfer(swap.paymentRecipient, swap.totalSwapOutputAmount - protocolFee)) {
             revert TransferFailed();
         }
