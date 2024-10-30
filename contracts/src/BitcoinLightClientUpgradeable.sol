@@ -25,7 +25,7 @@ contract BitcoinLightClientUpgradeable is Initializable {
 
     struct BlockLeaf {
         bytes32 blockHash;
-        uint32 height;
+        uint64 height;
         uint256 cumulativeChainwork;
     }
 
@@ -53,23 +53,12 @@ contract BitcoinLightClientUpgradeable is Initializable {
      * @notice Updates the MMR root with verification of new leaves data availability
      * @param priorMmrRoot The expected current MMR root
      * @param newMmrRoot The new MMR root to update to
-     * @param newEncodedLeaves The encoded leaves data being added to the MMR
-     * @param newLeavesCommitment The commitment (sha256 hash) of the new encoded leaves
      * @dev Updates the root only if:
      *      1. The prior root matches the current stored root
      *      2. The prior root is different from the new root
-     *      3. The new leaves commitment matches the sha256 hash of encoded leaves
      */
-    function updateRoot(
-        bytes32 priorMmrRoot,
-        bytes32 newMmrRoot,
-        bytes32 newLeavesCommitment,
-        bytes calldata newEncodedLeaves
-    ) internal {
+    function updateRoot(bytes32 priorMmrRoot, bytes32 newMmrRoot) internal {
         if (priorMmrRoot != mmrRoot || priorMmrRoot == newMmrRoot) return;
-
-        // Verify data availability of new leaves
-        if (sha256(newEncodedLeaves) != newLeavesCommitment) revert InvalidLeavesCommitment();
 
         mmrRoot = newMmrRoot;
         emit BlockTreeUpdated(newMmrRoot);
