@@ -6,7 +6,7 @@ error ServerNameTooLong();
 error MarketMakerAlreadyRegistered();
 error InvalidRange();
 
-contract MMRegistry {
+contract MarketMakerRegistry {
     struct MarketMaker {
         string server;
         address owner;
