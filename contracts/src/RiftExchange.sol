@@ -11,7 +11,7 @@ import {BitcoinLightClientUpgradeable} from "./BitcoinLightClientUpgradeable.sol
 
 error TransferFailed();
 error NewDepositsPaused();
-error DepositAmountIsZero();
+error DepositAmountTooLow();
 error SatOutputTooLow();
 error DepositVaultNotOverwritable();
 error InvalidScriptPubKey();
@@ -26,6 +26,7 @@ error InvalidVaultCommitment();
 error StillInChallengePeriod();
 error SwapNotProved();
 
+// TODO: Make unnecessary public functions internal
 /**
  * @title RiftExchange
  * @notice A decentralized exchange for cross-chain Bitcoin to ERC20 swaps
@@ -40,15 +41,15 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     }
 
     struct DepositVault {
-        uint256 vaultIndex; // 0 is sentinel, otherwise naturally ordered
+        uint256 vaultIndex;
         uint64 depositTimestamp;
-        uint256 depositAmount; // smallest ERC20 unit (non-buffered)
+        uint256 depositAmount;
         uint256 depositFee;
-        uint64 expectedSats; // BTC output amount in satoshis
-        bytes22 btcPayoutScriptPubKey; // p2wpkh only
+        uint64 expectedSats;
+        bytes22 btcPayoutScriptPubKey;
         address specifiedPayoutAddress;
         address ownerAddress;
-        bytes32 salt; // hash(blockhash[0],vaultIndex,chainId)
+        bytes32 salt;
     }
 
     struct ProposedSwap {
@@ -83,6 +84,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     // Set it to 2x the estimated proof generation time for n blocks.
     uint32 public constant CHALLENGE_PERIOD = 5 minutes;
     uint32 public constant MIN_PROTOCOL_FEE = 100_000; // 10 cents USDC
+    uint32 public constant MIN_DEPOSIT_AMOUNT = MIN_PROTOCOL_FEE + 1;
     uint8 public constant PROTOCOL_FEE_BP = 10; // maker + taker fee = 0.1%
     // Since upgradeable contracts cannot use immutable state variables,
     // we use constants instead to reduce gas costs (no SLOADs).
@@ -198,9 +200,9 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
         uint256 depositVaultIndex
-    ) internal view returns (DepositVault memory, bytes32) {
+    ) public view returns (DepositVault memory, bytes32) {
         // [0] ensure deposit amount is greater than min protocol fee
-        if (initialDepositAmount < MIN_PROTOCOL_FEE) revert DepositAmountIsZero();
+        if (initialDepositAmount < MIN_DEPOSIT_AMOUNT) revert DepositAmountTooLow();
 
         // [1] ensure expected sat output is above minimum to prevent dust errors
         if (expectedSats < MIN_OUTPUT_SATS) revert SatOutputTooLow();
@@ -208,7 +210,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
         // [2] ensure scriptPubKey is valid
         if (!validateP2WPKHScriptPubKey(btcPayoutScriptPubKey)) revert InvalidScriptPubKey();
 
-        uint256 depositFee = calculateFeeFromInitialDepositAmount(initialDepositAmount);
+        uint256 depositFee = calculateFeeFromAmount(initialDepositAmount);
 
         DepositVault memory vault = DepositVault({
             vaultIndex: depositVaultIndex,
@@ -229,7 +231,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     }
 
     /// @notice Completes deposit by emitting event and transferring tokens
-    function finalizeDeposit(DepositVault memory vault) internal {
+    function finalizeDeposit(DepositVault memory vault) public {
         emit VaultUpdated(vault);
         if (!DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee))
             revert TransferFailed();
@@ -277,7 +279,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
         uint256 totalSwapAmount,
         bytes calldata proof,
         bytes calldata compressedBlockLeaves
-    ) internal returns (ProposedSwap memory swap, bytes32 updatedSwapHash) {
+    ) public returns (ProposedSwap memory swap, bytes32 updatedSwapHash) {
         // [0] create deposit vault & compressed leaves commitments
         bytes32 aggregateVaultCommitment = validateDepositVaultCommitments(vaults);
         bytes32 compressedLeavesCommitment = EfficientHashLib.hash(compressedBlockLeaves);
@@ -480,20 +482,20 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
-    function hashDepositVault(DepositVault memory vault) internal pure returns (bytes32) {
+    function hashDepositVault(DepositVault memory vault) public pure returns (bytes32) {
         return EfficientHashLib.hash(abi.encode(vault));
     }
 
-    function hashSwap(ProposedSwap memory swap) internal pure returns (bytes32) {
+    function hashSwap(ProposedSwap memory swap) public pure returns (bytes32) {
         return EfficientHashLib.hash(abi.encode(swap));
     }
 
     /// @notice Validates that a scriptPubKey follows the P2WPKH format (OP_0(0x00) + OP_PUSHBYTES_20(0x14) + <20-byte-pubkey-hash>)
-    function validateP2WPKHScriptPubKey(bytes22 scriptPubKey) internal pure returns (bool) {
+    function validateP2WPKHScriptPubKey(bytes22 scriptPubKey) public pure returns (bool) {
         return scriptPubKey[0] == 0x00 && scriptPubKey[1] == 0x14;
     }
 
-    function validateDepositVaultCommitment(DepositVault calldata vault) internal view returns (bytes32) {
+    function validateDepositVaultCommitment(DepositVault calldata vault) public view returns (bytes32) {
         bytes32 vaultHash = hashDepositVault(vault);
         if (vaultHash != vaultCommitments[vault.vaultIndex]) {
             revert DepositVaultDoesNotExist();
@@ -501,7 +503,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
         return vaultHash;
     }
 
-    function validateSwapCommitment(ProposedSwap calldata swap) internal view returns (bytes32) {
+    function validateSwapCommitment(ProposedSwap calldata swap) public view returns (bytes32) {
         bytes32 swapHash = hashSwap(swap);
         if (swapHash != swapCommitments[swap.swapIndex]) {
             revert SwapDoesNotExist();
@@ -509,7 +511,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
         return swapHash;
     }
 
-    function validateDepositVaultCommitments(DepositVault[] calldata vaults) internal view returns (bytes32) {
+    function validateDepositVaultCommitments(DepositVault[] calldata vaults) public view returns (bytes32) {
         bytes32[] memory vaultHashes = new bytes32[](vaults.length);
         for (uint256 i = 0; i < vaults.length; i++) {
             vaultHashes[i] = validateDepositVaultCommitment(vaults[i]);
@@ -518,13 +520,11 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     }
 
     /// @notice Calculates protocol fee for a given deposit amount
-    /// @param initialDepositAmount The amount being deposited
+    /// @param amount The amount being deposited/swapped
     /// @return protocolFee The calculated protocol fee, either 0.1% or MIN_PROTOCOL_FEE, whichever is larger
-    function calculateFeeFromInitialDepositAmount(
-        uint256 initialDepositAmount
-    ) internal pure returns (uint256 protocolFee) {
+    function calculateFeeFromAmount(uint256 amount) public pure returns (uint256 protocolFee) {
         // [0] return $0.1 or 0.1% of swap value, whatever is larger
-        protocolFee = (initialDepositAmount * PROTOCOL_FEE_BP) / 10e3; // bpScale value
+        protocolFee = (amount * PROTOCOL_FEE_BP) / 10e3; // bpScale value
         if (protocolFee < MIN_PROTOCOL_FEE) protocolFee = MIN_PROTOCOL_FEE;
     }
 }
