@@ -130,8 +130,8 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     /// @dev Reverts if there are no fees to pay or if the transfer fails
     function payoutToFeeRouter() external {
         if (accumulatedFeeBalance == 0) revert NoFeeToPay();
-        if (!DEPOSIT_TOKEN.transfer(FEE_ROUTER_ADDRESS, accumulatedFeeBalance)) revert TransferFailed();
         accumulatedFeeBalance = 0;
+        if (!DEPOSIT_TOKEN.transfer(FEE_ROUTER_ADDRESS, accumulatedFeeBalance)) revert TransferFailed();
     }
 
     /// @notice Deposits new liquidity into a new vault
@@ -253,6 +253,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
         // [3] update deposit vault commitment
         DepositVault memory updatedVault = vault;
         updatedVault.depositAmount = 0;
+        updatedVault.depositFee = 0;
         bytes32 updatedVaultHash = hashDepositVault(updatedVault);
         vaultCommitments[vault.vaultIndex] = updatedVaultHash;
 
@@ -439,6 +440,7 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
         for (uint256 i = 0; i < utilizedVaults.length; i++) {
             DepositVault memory updatedVault = utilizedVaults[i];
             updatedVault.depositAmount = 0;
+            updatedVault.depositFee = 0;
             vaultCommitments[updatedVault.vaultIndex] = hashDepositVault(updatedVault);
         }
 

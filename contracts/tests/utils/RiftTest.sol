@@ -2,6 +2,14 @@
 pragma solidity ^0.8.4;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {SP1MockVerifier} from "@sp1-contracts/SP1MockVerifier.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+import {RiftExchange} from "../../src/RiftExchange.sol";
+import {BitcoinLightClientUpgradeable} from "../../src/BitcoinLightClientUpgradeable.sol";
+import {MockUSDT} from "./MockUSDT.sol";
 
 /// @author Modified from Solady (https://github.com/Vectorized/solady/blob/main/test/utils/TestPlus.sol)
 contract PRNG {
@@ -439,8 +447,41 @@ contract PRNG {
     }
 }
 
-/// @notice Extension of Forge Test contract w/ some utils.
-contract TestPlus is Test, PRNG {
+contract RiftTest is Test, PRNG {
+    address exchangeOwner = address(0xbeef);
+    bytes32 VAULT_UPDATED_TOPIC =
+        keccak256("VaultUpdated((uint256,uint64,uint256,uint256,uint64,bytes22,address,address,bytes32))");
+    bytes32 SWAP_UPDATED_TOPIC =
+        keccak256("SwapUpdated((uint256,bytes32,(bytes32,uint64,uint256),uint64,address,uint256,uint256,uint8))");
+    RiftExchange public exchange;
+    MockUSDT public mockUSDT;
+
+    function setUp() public {
+        RiftExchange implementation = new RiftExchange();
+        bytes32 mmrRoot = keccak256(abi.encodePacked("mmr root"));
+        BitcoinLightClientUpgradeable.BlockLeaf memory initialCheckpointLeaf = BitcoinLightClientUpgradeable.BlockLeaf({
+            blockHash: keccak256(abi.encodePacked("initial block")),
+            height: 0,
+            cumulativeChainwork: 0
+        });
+
+        bytes memory initData = abi.encodeWithSelector(
+            RiftExchange.initialize.selector,
+            mmrRoot,
+            initialCheckpointLeaf,
+            exchangeOwner
+        );
+
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+
+        exchange = RiftExchange(address(proxy));
+
+        vm.etch(address(exchange.VERIFIER_CONTRACT()), address(new SP1MockVerifier()).code);
+        vm.etch(address(exchange.DEPOSIT_TOKEN()), address(new MockUSDT()).code);
+
+        mockUSDT = MockUSDT(address(exchange.DEPOSIT_TOKEN()));
+    }
+
     function _callFFI(string memory cmd) internal returns (bytes memory) {
         string[] memory curlInputs = new string[](3);
         curlInputs[0] = "bash";
@@ -451,5 +492,63 @@ contract TestPlus is Test, PRNG {
 
     function _generateBtcPayoutScriptPubKey() internal returns (bytes22) {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
+    }
+
+    function _extractVaultFromLogs(Vm.Log[] memory logs) internal view returns (RiftExchange.DepositVault memory) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == VAULT_UPDATED_TOPIC) {
+                return abi.decode(logs[i].data, (RiftExchange.DepositVault));
+            }
+        }
+        revert("Vault not found");
+    }
+
+    function _extractSwapFromLogs(Vm.Log[] memory logs) internal view returns (RiftExchange.ProposedSwap memory) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == SWAP_UPDATED_TOPIC) {
+                return abi.decode(logs[i].data, (RiftExchange.ProposedSwap));
+            }
+        }
+        revert("Swap not found");
+    }
+
+    function _depositLiquidityWithAssertions(
+        uint256 depositAmount,
+        uint64 expectedSats
+    ) internal returns (RiftExchange.DepositVault memory) {
+        // [1] mint and approve deposit token
+        mockUSDT.mint(address(this), depositAmount);
+        mockUSDT.approve(address(exchange), depositAmount);
+
+        // [2] generate a scriptPubKey starting with a valid P2WPKH prefix (0x0014)
+        bytes22 btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
+
+        // [3] test deposit
+        vm.recordLogs();
+        exchange.depositLiquidity({
+            specifiedPayoutAddress: address(this),
+            initialDepositAmount: depositAmount,
+            expectedSats: expectedSats,
+            btcPayoutScriptPubKey: btcPayoutScriptPubKey
+        });
+
+        // [4] grab the logs, find the vault
+        RiftExchange.DepositVault memory createdVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        uint256 vaultIndex = exchange.getVaultCommitmentsLength() - 1;
+        bytes32 commitment = exchange.getVaultCommitment(vaultIndex);
+
+        // [5] verify "offchain" calculated commitment matches stored vault commitment
+        bytes32 offchainCommitment = exchange.hashDepositVault(createdVault);
+        assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
+
+        // [6] verify vault index
+        assertEq(createdVault.vaultIndex, vaultIndex, "Vault index should match");
+
+        // [7] verify caller has no balance left
+        assertEq(mockUSDT.balanceOf(address(this)), 0, "Caller should have no balance left");
+
+        // [8] verify owner address
+        assertEq(createdVault.ownerAddress, address(this), "Owner address should match");
+        return createdVault;
     }
 }
