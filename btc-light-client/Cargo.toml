@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "core",
+    "program",
+    "script",
+]
+resolver = "2"
+
+[workspace.dependencies]
+alloy-sol-types = "0.7.7"
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", branch = "patch-v0.5.5" }
+bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "e8867a50a7658ecebe794f0501d710191908f3a0"}
+
+
+[patch.crates-io]
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", package= "crypto-bigint", branch = "patch-v0.5.5" }

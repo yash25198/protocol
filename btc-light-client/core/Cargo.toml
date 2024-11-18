@@ -1,0 +1,9 @@
+[package]
+name = "btc-light-client-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+bitcoin-core-rs = { workspace = true }
+crypto-bigint = { workspace = true }
