@@ -581,7 +581,7 @@ checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
 [[package]]
 name = "bitcoin-core-rs"
 version = "0.1.0"
-source = "git+https://github.com/alpinevm/bitcoin-core-rs?rev=e8867a50a7658ecebe794f0501d710191908f3a0#e8867a50a7658ecebe794f0501d710191908f3a0"
+source = "git+https://github.com/alpinevm/bitcoin-core-rs?rev=aa8c98756a0f2c448f882023e1bab7c4b7d77ed3#aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"
 dependencies = [
  "cc",
  "eyre",
@@ -684,6 +684,12 @@ dependencies = [
  "alloy-sol-types",
  "bitcoin-core-rs",
  "crypto-bigint",
+ "hex",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -4513,9 +4519,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.132"
+version = "1.0.133"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
+checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
 dependencies = [
  "itoa",
  "memchr",
@@ -4582,8 +4588,7 @@ dependencies = [
 [[package]]
 name = "sha2"
 version = "0.10.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
+source = "git+https://github.com/sp1-patches/RustCrypto-hashes?branch=patch-v0.10.8#1f224388fdede7cef649bce0d63876d1a9e3f515"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -5422,9 +5427,9 @@ dependencies = [
 [[package]]
 name = "tiny-keccak"
 version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+source = "git+https://github.com/sp1-patches/tiny-keccak?tag=tiny_keccak-v2.0.2-patch-v1#bf0b28f63510a90c7b6c21ac6ff461c93ecd2331"
 dependencies = [
+ "cfg-if",
  "crunchy",
 ]
 
