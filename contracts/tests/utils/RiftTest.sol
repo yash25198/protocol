@@ -8,7 +8,7 @@ import {SP1MockVerifier} from "@sp1-contracts/SP1MockVerifier.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 import {RiftExchange} from "../../src/RiftExchange.sol";
-import {BitcoinLightClientUpgradeable} from "../../src/BitcoinLightClientUpgradeable.sol";
+import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {MockUSDT} from "./MockUSDT.sol";
 
 /// @author Modified from Solady (https://github.com/Vectorized/solady/blob/main/test/utils/TestPlus.sol)
@@ -455,29 +455,28 @@ contract RiftTest is Test, PRNG {
         keccak256("SwapUpdated((uint256,bytes32,(bytes32,uint64,uint256),uint64,address,uint256,uint256,uint8))");
     RiftExchange public exchange;
     MockUSDT public mockUSDT;
+    SP1MockVerifier public verifier;
 
     function setUp() public {
-        RiftExchange implementation = new RiftExchange();
+        mockUSDT = new MockUSDT();
+        verifier = new SP1MockVerifier();
+
         bytes32 mmrRoot = keccak256(abi.encodePacked("mmr root"));
-        BitcoinLightClientUpgradeable.BlockLeaf memory initialCheckpointLeaf = BitcoinLightClientUpgradeable.BlockLeaf({
+        BitcoinLightClient.BlockLeaf memory initialCheckpointLeaf = BitcoinLightClient.BlockLeaf({
             blockHash: keccak256(abi.encodePacked("initial block")),
             height: 0,
             cumulativeChainwork: 0
         });
 
-        bytes memory initData = abi.encodeWithSelector(
-            RiftExchange.initialize.selector,
-            mmrRoot,
-            initialCheckpointLeaf,
-            exchangeOwner
-        );
-
-        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
-
-        exchange = RiftExchange(address(proxy));
-
-        vm.etch(address(exchange.VERIFIER_CONTRACT()), address(new SP1MockVerifier()).code);
-        vm.etch(address(exchange.DEPOSIT_TOKEN()), address(new MockUSDT()).code);
+        exchange = new RiftExchange({
+            _initialOwner: exchangeOwner,
+            _mmrRoot: mmrRoot,
+            _initialCheckpointLeaf: initialCheckpointLeaf,
+            _depositToken: address(mockUSDT),
+            _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
+            _verifierContract: address(verifier),
+            _feeRouterAddress: address(0xfee)
+        });
 
         mockUSDT = MockUSDT(address(exchange.DEPOSIT_TOKEN()));
     }

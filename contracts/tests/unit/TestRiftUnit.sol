@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.27;
 
-import {BitcoinLightClientUpgradeable} from "../../src/BitcoinLightClientUpgradeable.sol";
+import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 
@@ -122,7 +122,7 @@ contract RiftExchangeUnitTest is RiftTest {
     }
 
     function _generateSimpleValidInclusionProof(
-        BitcoinLightClientUpgradeable.BlockLeaf memory leaf
+        BitcoinLightClient.BlockLeaf memory leaf
     ) internal view returns (bytes32[] memory proof, bytes32 root, bytes32 leafHash) {
         // This represents a simple Merkle tree:
         //       root (0xabc...)
@@ -231,7 +231,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [2] generate valid merkle proof components
         (bytes32[] memory inclusionProof, bytes32 mmrRoot, ) = _generateSimpleValidInclusionProof(
-            BitcoinLightClientUpgradeable.BlockLeaf({
+            BitcoinLightClient.BlockLeaf({
                 blockHash: proposedBlockHash,
                 height: proposedBlockHeight,
                 cumulativeChainwork: proposedBlockCumulativeChainwork

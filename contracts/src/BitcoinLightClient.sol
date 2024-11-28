@@ -1,25 +1,23 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity ^0.8.27;
 
-import {Initializable} from "@openzeppelin-upgradeable/proxy/utils/Initializable.sol";
 import {MerkleProofLib} from "solady/utils/MerkleProofLib.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 
 error InvalidLeavesCommitment();
 
 /**
- * @title BitcoinLightClientUpgradeable
+ * @title BitcoinLightClient
  * @notice A Bitcoin client implementation that maintains a Merkle Mountain Range (MMR)
  * of Bitcoin block headers for verification purposes
- * @dev This contract is designed to be used with the OpenZeppelin upgradeable contracts pattern
  *
- * Each block is stored as a leaf of thhe MMR containing:
+ * Each block is stored as a leaf of the MMR containing:
  * - Block hash
  * - Block height
  * - Cumulative chainwork
  * Updates to the MMR root rely on a ZK proof that the new leaves satisfy the Bitcoin Consensus rules.
  */
-contract BitcoinLightClientUpgradeable is Initializable {
+contract BitcoinLightClient {
     bytes32 public mmrRoot;
     BlockLeaf public initialCheckpointLeaf;
 
@@ -31,26 +29,20 @@ contract BitcoinLightClientUpgradeable is Initializable {
 
     event BlockTreeUpdated(bytes32 treeRoot);
 
-    /** @custom:oz-upgrades-unsafe-allow constructor */
-    constructor() {
-        _disableInitializers();
-    }
-
     /**
      * @notice Initializes the light client with an MMR root and initial checkpoint
      * @param _mmrRoot The initial MMR root
      * @param _initialCheckpointLeaf The initial checkpoint block leaf
      */
-    function __BitcoinLightClientUpgradeable_init(
-        bytes32 _mmrRoot,
-        BlockLeaf calldata _initialCheckpointLeaf
-    ) internal onlyInitializing {
+    constructor(bytes32 _mmrRoot, BlockLeaf memory _initialCheckpointLeaf) {
         mmrRoot = _mmrRoot;
         initialCheckpointLeaf = _initialCheckpointLeaf;
     }
 
     /**
-     * @notice Updates the MMR root with verification of new leaves data availability
+     * @notice Updates the MMR root. The caller must ensure:
+     * - The new root is built from a previously known header and all new headers satisfy PoW rules
+     * - All leaves being committed to the MMR are provably available (stored in calldata/blobspace)
      * @param priorMmrRoot The expected current MMR root
      * @param newMmrRoot The new MMR root to update to
      * @dev Updates the root only if:
@@ -66,7 +58,11 @@ contract BitcoinLightClientUpgradeable is Initializable {
 
     /**
      * @notice Verifies a block is included in the current MMR tree
-     * @param inclusionProof The merkle proof for inclusion
+     * @param blockLeaf The block leaf to verify inclusion for
+     * @param inclusionProof The MMR proof for inclusion. Contains sibling hashes that are:
+     *        - Combined with the leaf until reaching a peak
+     *        - Then combined with other peaks to form the bagged peaks
+     *        - Finally combined with the leaf count to form the root
      * @return bool True if the block is included in the current tree
      */
     function proveBlockInclusion(

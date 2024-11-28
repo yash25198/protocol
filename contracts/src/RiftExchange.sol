@@ -3,11 +3,11 @@ pragma solidity ^0.8.27;
 
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
-import {UUPSUpgradeable} from "@openzeppelin-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {OwnableUpgradeable} from "@openzeppelin-upgradeable/access/OwnableUpgradeable.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 
-import {BitcoinLightClientUpgradeable} from "./BitcoinLightClientUpgradeable.sol";
+import {BitcoinLightClient} from "./BitcoinLightClient.sol";
 
 error TransferFailed();
 error NewDepositsPaused();
@@ -32,7 +32,7 @@ error SwapNotProved();
  * @notice A decentralized exchange for cross-chain Bitcoin to ERC20 swaps
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification
  */
-contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPSUpgradeable {
+contract RiftExchange is BitcoinLightClient, Ownable {
     // --------- TYPES --------- //
     enum SwapState {
         None,
@@ -86,17 +86,14 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     uint32 public constant MIN_PROTOCOL_FEE = 100_000; // 10 cents USDC
     uint32 public constant MIN_DEPOSIT_AMOUNT = MIN_PROTOCOL_FEE + 1;
     uint8 public constant PROTOCOL_FEE_BP = 10; // maker + taker fee = 0.1%
-    // Since upgradeable contracts cannot use immutable state variables,
-    // we use constants instead to reduce gas costs (no SLOADs).
-    // Note: This approach makes deployments more complex.
-    /// @dev FOR BASE MAINNET DEPLOYMENT:
-    IERC20 public constant DEPOSIT_TOKEN = IERC20(0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913);
-    uint8 public constant TOKEN_DECIMALS = 6;
-    bytes32 public constant CIRCUIT_VERIFICATION_KEY =
-        0x00334569e4b8059d7b1a70c011d7d92b5d3ce28f2148b32cd2396aeda3ae5af1;
-    ISP1Verifier public constant VERIFIER_CONTRACT = ISP1Verifier(0x3B6041173B80E77f038f3F2C0f9744f04837185e);
-    address public constant FEE_ROUTER_ADDRESS = 0xfEe8d79961c529E06233fbF64F96454c2656BFEE;
-    uint8 public constant MIN_CONFIRMATION_BLOCKS = 3;
+    uint8 public constant MIN_CONFIRMATION_BLOCKS = 2;
+
+    // --------- IMMUTABLES --------- //
+    IERC20 public immutable DEPOSIT_TOKEN;
+    uint8 public immutable TOKEN_DECIMALS;
+    bytes32 public immutable CIRCUIT_VERIFICATION_KEY;
+    ISP1Verifier public immutable VERIFIER_CONTRACT;
+    address public immutable FEE_ROUTER_ADDRESS;
 
     // --------- STATE --------- //
 
@@ -110,19 +107,20 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     event SwapUpdated(ProposedSwap swap);
 
     //--------- CONSTRUCTOR ---------//
-    function initialize(
+    constructor(
+        address _initialOwner,
         bytes32 _mmrRoot,
-        BlockLeaf calldata _initialCheckpointLeaf,
-        address initialOwner
-    ) public initializer {
-        __UUPSUpgradeable_init();
-        __Ownable_init(initialOwner);
-        __BitcoinLightClientUpgradeable_init(_mmrRoot, _initialCheckpointLeaf);
-    }
-
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
+        BlockLeaf memory _initialCheckpointLeaf,
+        address _depositToken,
+        bytes32 _circuitVerificationKey,
+        address _verifierContract,
+        address _feeRouterAddress
+    ) Ownable(_initialOwner) BitcoinLightClient(_mmrRoot, _initialCheckpointLeaf) {
+        DEPOSIT_TOKEN = IERC20(_depositToken);
+        TOKEN_DECIMALS = IERC20Metadata(_depositToken).decimals();
+        CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;
+        VERIFIER_CONTRACT = ISP1Verifier(_verifierContract);
+        FEE_ROUTER_ADDRESS = _feeRouterAddress;
     }
 
     //--------- WRITE FUNCTIONS ---------//
@@ -481,8 +479,6 @@ contract RiftExchange is BitcoinLightClientUpgradeable, OwnableUpgradeable, UUPS
     }
 
     //--------- INTERNAL FUNCTIONS ---------//
-
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     function hashDepositVault(DepositVault memory vault) public pure returns (bytes32) {
         return EfficientHashLib.hash(abi.encode(vault));
