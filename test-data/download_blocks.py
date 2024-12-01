@@ -83,7 +83,11 @@ async def download_header(height: int, bitcoin_rpc: str, rate_limiter: RateLimit
             await asyncio.sleep(wait_time)
 
 
-def save_headers_to_file(headers: list[tuple[int, str]], filename: str = 'data/blocks.json') -> None:
+def save_headers_to_file(headers: list[tuple[int, str]], filename: str = 'data/blocks.json', start_height: int = None, end_height: int = None) -> None:
+    # Filter headers based on height range if provided
+    if start_height is not None and end_height is not None:
+        headers = [(height, header) for height, header in headers if start_height <= height <= end_height]
+    
     for height, header in headers:
         assert header is not None
         assert len(header) == 80*2, f"Header length is {len(header)} for height {height}\nHeader: {header}"
@@ -154,10 +158,13 @@ async def main():
         tasks = [process_height(height) for height in range(batch_start, batch_end)]
         batch_results = await asyncio.gather(*tasks)
         all_results.extend(batch_results)
-        save_headers_to_file(all_results)
+        
+        # Save to appropriate files based on ranges
+        save_headers_to_file(all_results, 'data/blocks_0_9999.json', 0, 9999)
+        save_headers_to_file(all_results, 'data/blocks_10000_800000.json', 10000, 800000)
 
-    
-    save_headers_to_file(all_results)
+    # Remove the final save since we're already saving in batches
+    # save_headers_to_file(all_results)
 
 if __name__ == "__main__":
     load_dotenv()
