@@ -294,4 +294,19 @@ pub mod tests {
         let max_work = U256::MAX.wrapping_sub(&U256::ONE);
         calculate_cumulative_work(max_work, &[overflow_header]);
     }
+
+    #[test]
+    #[should_panic(expected = "Header chain link is not connected")]
+    fn test_validate_header_chain_with_gap() {
+        let genesis_header = &TEST_HEADERS[0].1;
+
+        // create a chain that skips block 5
+        let mut header_chain: Vec<Header> = TEST_HEADERS[1..5]
+            .iter()
+            .map(|(_, header)| *header)
+            .collect();
+        header_chain.extend(TEST_HEADERS[6..10].iter().map(|(_, header)| *header));
+
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+    }
 }
