@@ -2,6 +2,11 @@
 pragma solidity ^0.8.27;
 
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
+import {Constants} from "../../src/libraries/Constants.sol";
+import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
+import {CommitmentVerificationLib} from "../../src/libraries/CommitmentVerificationLib.sol";
+import {Types} from "../../src/libraries/Types.sol";
+import {MarketLib} from "../../src/libraries/MarketLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 
@@ -9,8 +14,8 @@ contract RiftExchangeUnitTest is RiftTest {
     // Test that depositLiquidity appends a new commitment to the vaultCommitments array
     function testFuzz_depositLiquidity(uint256 depositAmount, uint64 expectedSats, uint256) public {
         // [0] bound deposit amount & expected sats
-        depositAmount = bound(depositAmount, exchange.MIN_DEPOSIT_AMOUNT(), type(uint64).max);
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         _depositLiquidityWithAssertions(depositAmount, expectedSats);
     }
 
@@ -19,31 +24,32 @@ contract RiftExchangeUnitTest is RiftTest {
         uint64 expectedSats,
         uint256 toBeOverwrittenInitialDepositAmount,
         uint64 toBeOverwrittenExpectedSats,
+        bytes32 depositSalt,
         uint256
     ) public {
         // [0] bound deposit amounts & expected sats
-        initialDepositAmount = bound(initialDepositAmount, exchange.MIN_DEPOSIT_AMOUNT(), type(uint64).max);
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        initialDepositAmount = bound(initialDepositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         toBeOverwrittenInitialDepositAmount = bound(
             toBeOverwrittenInitialDepositAmount,
-            exchange.MIN_DEPOSIT_AMOUNT(),
+            Constants.MIN_DEPOSIT_AMOUNT,
             type(uint64).max
         );
         toBeOverwrittenExpectedSats = uint64(
-            bound(toBeOverwrittenExpectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max)
+            bound(toBeOverwrittenExpectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max)
         );
 
         // [1] create initial deposit
-        RiftExchange.DepositVault memory fullVault = _depositLiquidityWithAssertions(
+        Types.DepositVault memory fullVault = _depositLiquidityWithAssertions(
             toBeOverwrittenInitialDepositAmount,
             toBeOverwrittenExpectedSats
         );
 
         // [2] warp and withdraw to empty the vault
-        vm.warp(block.timestamp + exchange.DEPOSIT_LOCKUP_PERIOD());
+        vm.warp(block.timestamp + Constants.DEPOSIT_LOCKUP_PERIOD);
         vm.recordLogs();
         exchange.withdrawLiquidity({vault: fullVault});
-        RiftExchange.DepositVault memory emptyVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory emptyVault = _extractVaultFromLogs(vm.getRecordedLogs());
 
         // [3] burn the USDT withdrawn from the vault
         mockUSDT.transfer(address(0), mockUSDT.balanceOf(address(this)));
@@ -59,15 +65,16 @@ contract RiftExchangeUnitTest is RiftTest {
             initialDepositAmount: initialDepositAmount,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
-            overwriteVault: emptyVault
+            overwriteVault: emptyVault,
+            depositSalt: depositSalt
         });
 
         // [6] grab the logs, find the new vault
-        RiftExchange.DepositVault memory overwrittenVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory overwrittenVault = _extractVaultFromLogs(vm.getRecordedLogs());
         bytes32 commitment = exchange.getVaultCommitment(emptyVault.vaultIndex);
 
         // [7] verify "offchain" calculated commitment matches stored vault commitment
-        bytes32 offchainCommitment = exchange.hashDepositVault(overwrittenVault);
+        bytes32 offchainCommitment = CommitmentVerificationLib.hashDepositVault(overwrittenVault);
         assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
 
         // [8] verify vault index remains the same
@@ -87,12 +94,12 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256
     ) public {
         // [0] bound inputs
-        depositAmount = bound(depositAmount, exchange.MIN_DEPOSIT_AMOUNT(), type(uint64).max);
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
-        withdrawalDelay = bound(withdrawalDelay, exchange.DEPOSIT_LOCKUP_PERIOD(), 365 days);
+        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
+        withdrawalDelay = bound(withdrawalDelay, Constants.DEPOSIT_LOCKUP_PERIOD, 365 days);
 
         // [1] create initial deposit and get vault
-        RiftExchange.DepositVault memory vault = _depositLiquidityWithAssertions(depositAmount, expectedSats);
+        Types.DepositVault memory vault = _depositLiquidityWithAssertions(depositAmount, expectedSats);
         uint256 initialBalance = mockUSDT.balanceOf(address(this));
         uint256 expectedWithdrawAmount = vault.depositAmount;
 
@@ -102,11 +109,11 @@ contract RiftExchangeUnitTest is RiftTest {
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
         exchange.withdrawLiquidity(vault);
-        RiftExchange.DepositVault memory updatedVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory updatedVault = _extractVaultFromLogs(vm.getRecordedLogs());
 
         // [4] verify updated vault commitment matches stored commitment
         bytes32 storedCommitment = exchange.getVaultCommitment(vault.vaultIndex);
-        bytes32 calculatedCommitment = exchange.hashDepositVault(updatedVault);
+        bytes32 calculatedCommitment = CommitmentVerificationLib.hashDepositVault(updatedVault);
         assertEq(calculatedCommitment, storedCommitment, "Vault commitment mismatch");
 
         // [5] verify vault is now empty
@@ -122,15 +129,15 @@ contract RiftExchangeUnitTest is RiftTest {
     }
 
     function _generateSimpleValidInclusionProof(
-        BitcoinLightClient.BlockLeaf memory leaf
-    ) internal view returns (bytes32[] memory proof, bytes32 root, bytes32 leafHash) {
+        Types.BlockLeaf memory leaf
+    ) internal pure returns (bytes32[] memory proof, bytes32 root, bytes32 leafHash) {
         // This represents a simple Merkle tree:
         //       root (0xabc...)
         //      /          \
         //   leaf          0x123...
         //   (block)       (other branch)
 
-        leafHash = exchange.buildLeafCommitment(leaf);
+        leafHash = LightClientVerificationLib.buildLeafCommitment(leaf);
 
         bytes32 rightBranch = keccak256(abi.encodePacked("right branch"));
 
@@ -151,14 +158,14 @@ contract RiftExchangeUnitTest is RiftTest {
 
     function testFuzz_submitSwapProof(uint256 depositAmount, uint64 expectedSats, uint8 numVaults, uint256) public {
         // [0] bound inputs
-        depositAmount = bound(depositAmount, exchange.MIN_DEPOSIT_AMOUNT(), type(uint64).max);
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         numVaults = uint8(bound(numVaults, 1, 100)); // Reasonable max to avoid gas issues
         uint256 totalSwapAmount = depositAmount * numVaults;
-        uint256 totalSwapFee = exchange.calculateFeeFromAmount(totalSwapAmount);
+        uint256 totalSwapFee = MarketLib.calculateFeeFromAmount(totalSwapAmount);
 
         // [1] create multiple deposit vaults
-        RiftExchange.DepositVault[] memory vaults = new RiftExchange.DepositVault[](numVaults);
+        Types.DepositVault[] memory vaults = new Types.DepositVault[](numVaults);
         for (uint256 i = 0; i < numVaults; i++) {
             vaults[i] = _depositLiquidityWithAssertions(depositAmount, expectedSats);
         }
@@ -189,7 +196,7 @@ contract RiftExchangeUnitTest is RiftTest {
         });
 
         // [4] extract swap from logs
-        RiftExchange.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
+        Types.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
         uint256 swapIndex = exchange.getSwapCommitmentsLength() - 1;
         bytes32 commitment = exchange.getSwapCommitment(swapIndex);
 
@@ -198,10 +205,10 @@ contract RiftExchangeUnitTest is RiftTest {
         assertEq(createdSwap.specifiedPayoutAddress, address(this), "Payout address should match");
         assertEq(createdSwap.totalSwapAmount, totalSwapAmount, "Swap amount should match");
         assertEq(createdSwap.totalSwapFee, totalSwapFee, "Swap fee should match");
-        assertEq(uint8(createdSwap.state), uint8(RiftExchange.SwapState.Proved), "Swap should be in Proved state");
+        assertEq(uint8(createdSwap.state), uint8(Types.SwapState.Proved), "Swap should be in Proved state");
 
         // [6] verify commitment
-        bytes32 offchainCommitment = exchange.hashSwap(createdSwap);
+        bytes32 offchainCommitment = CommitmentVerificationLib.hashSwap(createdSwap);
         assertEq(offchainCommitment, commitment, "Offchain swap commitment should match");
     }
 
@@ -213,14 +220,14 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256
     ) public {
         // [0] bound inputs
-        depositAmount = bound(depositAmount, exchange.MIN_DEPOSIT_AMOUNT(), type(uint64).max);
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         numVaults = uint8(bound(numVaults, 1, 100)); // Reasonable max to avoid gas issues
-        totalSwapAmount = bound(totalSwapAmount, exchange.MIN_DEPOSIT_AMOUNT(), depositAmount * numVaults);
-        uint256 totalSwapFee = exchange.calculateFeeFromAmount(totalSwapAmount);
+        totalSwapAmount = bound(totalSwapAmount, Constants.MIN_DEPOSIT_AMOUNT, depositAmount * numVaults);
+        uint256 totalSwapFee = MarketLib.calculateFeeFromAmount(totalSwapAmount);
 
         // [1] create multiple deposit vaults
-        RiftExchange.DepositVault[] memory vaults = new RiftExchange.DepositVault[](numVaults);
+        Types.DepositVault[] memory vaults = new Types.DepositVault[](numVaults);
         for (uint256 i = 0; i < numVaults; i++) {
             vaults[i] = _depositLiquidityWithAssertions(depositAmount, expectedSats);
         }
@@ -231,7 +238,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [2] generate valid merkle proof components
         (bytes32[] memory inclusionProof, bytes32 mmrRoot, ) = _generateSimpleValidInclusionProof(
-            BitcoinLightClient.BlockLeaf({
+            Types.BlockLeaf({
                 blockHash: proposedBlockHash,
                 height: proposedBlockHeight,
                 cumulativeChainwork: proposedBlockCumulativeChainwork
@@ -258,10 +265,10 @@ contract RiftExchangeUnitTest is RiftTest {
         });
 
         // [4] extract swap from logs
-        RiftExchange.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
+        Types.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
 
         // [5] warp past challenge period
-        vm.warp(block.timestamp + exchange.CHALLENGE_PERIOD());
+        vm.warp(block.timestamp + Constants.CHALLENGE_PERIOD);
 
         // [6] record initial balances
         uint256 initialBalance = mockUSDT.balanceOf(address(this));
@@ -272,8 +279,8 @@ contract RiftExchangeUnitTest is RiftTest {
         exchange.releaseLiquidity(createdSwap, inclusionProof, vaults);
 
         // [8] verify swap was marked as completed
-        RiftExchange.ProposedSwap memory updatedSwap = _extractSwapFromLogs(vm.getRecordedLogs());
-        assertEq(uint8(updatedSwap.state), uint8(RiftExchange.SwapState.Completed), "Swap should be completed");
+        Types.ProposedSwap memory updatedSwap = _extractSwapFromLogs(vm.getRecordedLogs());
+        assertEq(uint8(updatedSwap.state), uint8(Types.SwapState.Completed), "Swap should be completed");
 
         // [9] verify funds were transferred correctly
         assertEq(
@@ -290,10 +297,10 @@ contract RiftExchangeUnitTest is RiftTest {
         // [10] verify vaults were emptied
         for (uint256 i = 0; i < vaults.length; i++) {
             bytes32 vaultCommitment = exchange.getVaultCommitment(vaults[i].vaultIndex);
-            RiftExchange.DepositVault memory emptyVault = vaults[i];
+            Types.DepositVault memory emptyVault = vaults[i];
             emptyVault.depositAmount = 0;
             emptyVault.depositFee = 0;
-            bytes32 expectedCommitment = exchange.hashDepositVault(emptyVault);
+            bytes32 expectedCommitment = CommitmentVerificationLib.hashDepositVault(emptyVault);
             assertEq(vaultCommitment, expectedCommitment, "Vault should be empty");
         }
     }

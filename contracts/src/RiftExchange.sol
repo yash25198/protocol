@@ -7,87 +7,24 @@ import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 
+import {Constants} from "./libraries/Constants.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {Types} from "./libraries/Types.sol";
+import {Events} from "./libraries/Events.sol";
+import {CommitmentVerificationLib} from "./libraries/CommitmentVerificationLib.sol";
+import {MarketLib} from "./libraries/MarketLib.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
 
-error TransferFailed();
-error NewDepositsPaused();
-error DepositAmountTooLow();
-error SatOutputTooLow();
-error DepositVaultNotOverwritable();
-error InvalidScriptPubKey();
-error DepositVaultDoesNotExist();
-error SwapDoesNotExist();
-error EmptyDepositVault();
-error DepositStillLocked();
-error InvalidBlockInclusionProof();
-error CannotOverwriteOnGoingSwap();
-error NoFeeToPay();
-error InvalidVaultCommitment();
-error StillInChallengePeriod();
-error SwapNotProved();
-
-// TODO: Make unnecessary public functions internal
+// TODO: Make unnecessary public functions internal, setup interfaces for light client and exchange
+// all pure functions should be behind a library in a seperate file
 /**
  * @title RiftExchange
+ * @author alpinevm <https://github.com/alpinevm>
+ * @author spacegod <https://github.com/bruidbarrett>
  * @notice A decentralized exchange for cross-chain Bitcoin to ERC20 swaps
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification
  */
 contract RiftExchange is BitcoinLightClient, Ownable {
-    // --------- TYPES --------- //
-    enum SwapState {
-        None,
-        Proved,
-        Completed
-    }
-
-    struct DepositVault {
-        uint256 vaultIndex;
-        uint64 depositTimestamp;
-        uint256 depositAmount;
-        uint256 depositFee;
-        uint64 expectedSats;
-        bytes22 btcPayoutScriptPubKey;
-        address specifiedPayoutAddress;
-        address ownerAddress;
-        bytes32 salt;
-    }
-
-    struct ProposedSwap {
-        uint256 swapIndex;
-        bytes32 aggregateVaultCommitment;
-        BlockLeaf proposedBlockLeaf;
-        uint64 liquidityUnlockTimestamp;
-        address specifiedPayoutAddress;
-        uint256 totalSwapFee;
-        uint256 totalSwapAmount;
-        SwapState state;
-    }
-
-    struct SwapProofPublicInputs {
-        bytes32 proposedBlockHash;
-        bytes32 aggregateVaultCommitment;
-        bytes32 previousMmrRoot;
-        bytes32 newMmrRoot;
-        bytes32 compressedLeavesCommitment;
-        uint256 proposedBlockCumulativeChainwork;
-        address specifiedPayoutAddress;
-        uint64 proposedBlockHeight;
-        uint64 confirmationBlocks;
-        uint256 totalSwapFee;
-        uint256 totalSwapAmount;
-    }
-
-    // --------- CONSTANTS --------- //
-    uint16 public constant DEPOSIT_LOCKUP_PERIOD = 8 hours;
-    uint16 public constant MIN_OUTPUT_SATS = 1000; // to prevent dust errors
-    // TODO: Challenge period should scale with the number of blocks in the proof.
-    // Set it to 2x the estimated proof generation time for n blocks.
-    uint32 public constant CHALLENGE_PERIOD = 5 minutes;
-    uint32 public constant MIN_PROTOCOL_FEE = 100_000; // 10 cents USDC
-    uint32 public constant MIN_DEPOSIT_AMOUNT = MIN_PROTOCOL_FEE + 1;
-    uint8 public constant PROTOCOL_FEE_BP = 10; // maker + taker fee = 0.1%
-    uint8 public constant MIN_CONFIRMATION_BLOCKS = 2;
-
     // --------- IMMUTABLES --------- //
     IERC20 public immutable DEPOSIT_TOKEN;
     uint8 public immutable TOKEN_DECIMALS;
@@ -96,21 +33,15 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     address public immutable FEE_ROUTER_ADDRESS;
 
     // --------- STATE --------- //
-
     bytes32[] public vaultCommitments;
     bytes32[] public swapCommitments;
     uint256 public accumulatedFeeBalance;
-
-    // --------- EVENTS --------- //
-
-    event VaultUpdated(DepositVault vault);
-    event SwapUpdated(ProposedSwap swap);
 
     //--------- CONSTRUCTOR ---------//
     constructor(
         address _initialOwner,
         bytes32 _mmrRoot,
-        BlockLeaf memory _initialCheckpointLeaf,
+        Types.BlockLeaf memory _initialCheckpointLeaf,
         address _depositToken,
         bytes32 _circuitVerificationKey,
         address _verifierContract,
@@ -127,9 +58,9 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     /// @notice Sends accumulated protocol fees to the fee router contract
     /// @dev Reverts if there are no fees to pay or if the transfer fails
     function payoutToFeeRouter() external {
-        if (accumulatedFeeBalance == 0) revert NoFeeToPay();
+        if (accumulatedFeeBalance == 0) revert Errors.NoFeeToPay();
         accumulatedFeeBalance = 0;
-        if (!DEPOSIT_TOKEN.transfer(FEE_ROUTER_ADDRESS, accumulatedFeeBalance)) revert TransferFailed();
+        if (!DEPOSIT_TOKEN.transfer(FEE_ROUTER_ADDRESS, accumulatedFeeBalance)) revert Errors.TransferFailed();
     }
 
     /// @notice Deposits new liquidity into a new vault
@@ -137,19 +68,22 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     /// @param initialDepositAmount Amount of ERC20 tokens to deposit including fee
     /// @param expectedSats Expected BTC output in satoshis
     /// @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
+    /// @param depositSalt User generated salt for vault nonce
     function depositLiquidity(
         address specifiedPayoutAddress,
         uint256 initialDepositAmount,
         uint64 expectedSats,
-        bytes22 btcPayoutScriptPubKey
+        bytes22 btcPayoutScriptPubKey,
+        bytes32 depositSalt
     ) external {
         // [0] create deposit liquidity request
-        (DepositVault memory vault, bytes32 depositHash) = prepareDeposit(
+        (Types.DepositVault memory vault, bytes32 depositHash) = prepareDeposit(
             specifiedPayoutAddress,
             initialDepositAmount,
             expectedSats,
             btcPayoutScriptPubKey,
-            vaultCommitments.length
+            vaultCommitments.length,
+            depositSalt
         );
 
         // [1] add deposit hash to vault commitments
@@ -167,20 +101,22 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         uint256 initialDepositAmount,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
-        DepositVault calldata overwriteVault
+        bytes32 depositSalt,
+        Types.DepositVault calldata overwriteVault
     ) external {
         // [0] create deposit liquidity request
-        (DepositVault memory vault, bytes32 depositHash) = prepareDeposit(
+        (Types.DepositVault memory vault, bytes32 depositHash) = prepareDeposit(
             specifiedPayoutAddress,
             initialDepositAmount,
             expectedSats,
             btcPayoutScriptPubKey,
-            overwriteVault.vaultIndex
+            overwriteVault.vaultIndex,
+            depositSalt
         );
 
         // [1] ensure passed vault is real and overwritable
-        validateDepositVaultCommitment(overwriteVault);
-        if (overwriteVault.depositAmount != 0) revert DepositVaultNotOverwritable();
+        CommitmentVerificationLib.validateDepositVaultCommitment(overwriteVault, vaultCommitments);
+        if (overwriteVault.depositAmount != 0) revert Errors.DepositVaultNotOverwritable();
 
         // [2] overwrite deposit vault
         vaultCommitments[overwriteVault.vaultIndex] = depositHash;
@@ -197,20 +133,22 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         uint256 initialDepositAmount,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
-        uint256 depositVaultIndex
-    ) public view returns (DepositVault memory, bytes32) {
+        uint256 depositVaultIndex,
+        bytes32 depositSalt
+    ) public view returns (Types.DepositVault memory, bytes32) {
         // [0] ensure deposit amount is greater than min protocol fee
-        if (initialDepositAmount < MIN_DEPOSIT_AMOUNT) revert DepositAmountTooLow();
+        if (initialDepositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
 
         // [1] ensure expected sat output is above minimum to prevent dust errors
-        if (expectedSats < MIN_OUTPUT_SATS) revert SatOutputTooLow();
+        if (expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
 
         // [2] ensure scriptPubKey is valid
-        if (!validateP2WPKHScriptPubKey(btcPayoutScriptPubKey)) revert InvalidScriptPubKey();
+        if (!CommitmentVerificationLib.validateP2WPKHScriptPubKey(btcPayoutScriptPubKey))
+            revert Errors.InvalidScriptPubKey();
 
-        uint256 depositFee = calculateFeeFromAmount(initialDepositAmount);
+        uint256 depositFee = MarketLib.calculateFeeFromAmount(initialDepositAmount);
 
-        DepositVault memory vault = DepositVault({
+        Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,
             depositTimestamp: uint64(block.timestamp),
             depositAmount: initialDepositAmount - depositFee,
@@ -219,46 +157,51 @@ contract RiftExchange is BitcoinLightClient, Ownable {
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
             specifiedPayoutAddress: specifiedPayoutAddress,
             ownerAddress: msg.sender,
-            salt: EfficientHashLib.hash(
-                bytes32(blockhash(block.number - 1)),
-                bytes32(depositVaultIndex),
-                bytes32(block.chainid)
-            )
+            /// @dev Nonce prevents replay attacks by combining:
+            /// 1. depositSalt - LP-provided entropy, unknown before deposit
+            /// 2. depositVaultIndex - prevents same-block collisions
+            /// 3. chainId - prevents cross-chain replay
+            /// While a random salt from the LP would be sufficient for security,
+            /// including the vault index and chain ID ensures protocol safety even if
+            /// an LP uses a predictable salt. LPs are incentivized to use random salts
+            /// to protect their own liquidity.
+            nonce: EfficientHashLib.hash(depositSalt, bytes32(depositVaultIndex), bytes32(uint256(block.chainid)))
         });
-        return (vault, hashDepositVault(vault));
+        return (vault, CommitmentVerificationLib.hashDepositVault(vault));
     }
 
     /// @notice Completes deposit by emitting event and transferring tokens
-    function finalizeDeposit(DepositVault memory vault) public {
-        emit VaultUpdated(vault);
+    function finalizeDeposit(Types.DepositVault memory vault) public {
+        emit Events.VaultUpdated(vault);
         if (!DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee))
-            revert TransferFailed();
+            revert Errors.TransferFailed();
     }
 
     /// @notice Withdraws liquidity from a deposit vault after the lockup period
     /// @param vault The deposit vault to withdraw from
     /// @dev Anyone can call, reverts if vault doesn't exist, is empty, or still in lockup period
-    function withdrawLiquidity(DepositVault calldata vault) external {
+    function withdrawLiquidity(Types.DepositVault calldata vault) external {
         // [0] validate deposit vault exists
-        validateDepositVaultCommitment(vault);
+        CommitmentVerificationLib.validateDepositVaultCommitment(vault, vaultCommitments);
 
         // [1] ensure deposit amount is non-zero
-        if (vault.depositAmount == 0) revert EmptyDepositVault();
+        if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
 
         // [2] ensure the deposit vault is not time locked
-        if (block.timestamp < vault.depositTimestamp + DEPOSIT_LOCKUP_PERIOD) revert DepositStillLocked();
+        if (block.timestamp < vault.depositTimestamp + Constants.DEPOSIT_LOCKUP_PERIOD)
+            revert Errors.DepositStillLocked();
 
         // [3] update deposit vault commitment
-        DepositVault memory updatedVault = vault;
+        Types.DepositVault memory updatedVault = vault;
         updatedVault.depositAmount = 0;
         updatedVault.depositFee = 0;
-        bytes32 updatedVaultHash = hashDepositVault(updatedVault);
+        bytes32 updatedVaultHash = CommitmentVerificationLib.hashDepositVault(updatedVault);
         vaultCommitments[vault.vaultIndex] = updatedVaultHash;
 
         // [4] transfer funds to vault owner
-        emit VaultUpdated(updatedVault);
+        emit Events.VaultUpdated(updatedVault);
         if (!DEPOSIT_TOKEN.transfer(vault.ownerAddress, vault.depositAmount)) {
-            revert TransferFailed();
+            revert Errors.TransferFailed();
         }
     }
 
@@ -270,7 +213,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         bytes32 proposedBlockHash,
         uint64 proposedBlockHeight,
         uint256 proposedBlockCumulativeChainwork,
-        DepositVault[] calldata vaults,
+        Types.DepositVault[] calldata vaults,
         address specifiedPayoutAddress,
         bytes32 priorMmrRoot,
         bytes32 newMmrRoot,
@@ -278,14 +221,17 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         uint256 totalSwapAmount,
         bytes calldata proof,
         bytes calldata compressedBlockLeaves
-    ) public returns (ProposedSwap memory swap, bytes32 updatedSwapHash) {
+    ) public returns (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) {
         // [0] create deposit vault & compressed leaves commitments
-        bytes32 aggregateVaultCommitment = validateDepositVaultCommitments(vaults);
+        bytes32 aggregateVaultCommitment = CommitmentVerificationLib.validateDepositVaultCommitments(
+            vaults,
+            vaultCommitments
+        );
         bytes32 compressedLeavesCommitment = EfficientHashLib.hash(compressedBlockLeaves);
 
         // [1] craft public inputs and verify proof
         bytes memory publicInputs = abi.encode(
-            SwapProofPublicInputs({
+            Types.SwapProofPublicInputs({
                 proposedBlockHash: proposedBlockHash,
                 aggregateVaultCommitment: aggregateVaultCommitment,
                 previousMmrRoot: priorMmrRoot,
@@ -294,7 +240,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
                 proposedBlockCumulativeChainwork: proposedBlockCumulativeChainwork,
                 specifiedPayoutAddress: specifiedPayoutAddress,
                 proposedBlockHeight: proposedBlockHeight,
-                confirmationBlocks: MIN_CONFIRMATION_BLOCKS,
+                confirmationBlocks: Constants.MIN_CONFIRMATION_BLOCKS,
                 totalSwapFee: totalSwapFee,
                 totalSwapAmount: totalSwapAmount
             })
@@ -304,22 +250,22 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         updateRoot(priorMmrRoot, newMmrRoot);
 
         // [2] create the new swap
-        swap = ProposedSwap({
+        swap = Types.ProposedSwap({
             swapIndex: swapIndex,
             aggregateVaultCommitment: aggregateVaultCommitment,
-            proposedBlockLeaf: BlockLeaf({
+            proposedBlockLeaf: Types.BlockLeaf({
                 blockHash: proposedBlockHash,
                 height: proposedBlockHeight,
                 cumulativeChainwork: proposedBlockCumulativeChainwork
             }),
-            liquidityUnlockTimestamp: uint64(block.timestamp + CHALLENGE_PERIOD),
+            liquidityUnlockTimestamp: uint64(block.timestamp + Constants.CHALLENGE_PERIOD),
             specifiedPayoutAddress: specifiedPayoutAddress,
             totalSwapFee: totalSwapFee,
             totalSwapAmount: totalSwapAmount,
-            state: SwapState.Proved
+            state: Types.SwapState.Proved
         });
 
-        updatedSwapHash = hashSwap(swap);
+        updatedSwapHash = CommitmentVerificationLib.hashSwap(swap);
     }
 
     /// @notice Submits a new swap proof and adds it to swapCommitments
@@ -336,7 +282,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         bytes32 proposedBlockHash,
         uint64 proposedBlockHeight,
         uint256 proposedBlockCumulativeChainwork,
-        DepositVault[] calldata vaults,
+        Types.DepositVault[] calldata vaults,
         address specifiedPayoutAddress,
         bytes32 priorMmrRoot,
         bytes32 newMmrRoot,
@@ -346,7 +292,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         bytes calldata compressedBlockLeaves
     ) external {
         // [0] validate swap proof
-        (ProposedSwap memory swap, bytes32 updatedSwapHash) = validateSwap(
+        (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) = validateSwap(
             swapCommitments.length,
             proposedBlockHash,
             proposedBlockHeight,
@@ -363,7 +309,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
         // [1] update swap commitments with updated swap hash
         swapCommitments.push(updatedSwapHash);
-        emit SwapUpdated(swap);
+        emit Events.SwapUpdated(swap);
     }
 
     /// @notice Same as submitSwapProof but overwrites an existing completed swap commitment
@@ -373,7 +319,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         bytes32 proposedBlockHash,
         uint64 proposedBlockHeight,
         uint256 proposedBlockCumulativeChainwork,
-        DepositVault[] calldata vaults,
+        Types.DepositVault[] calldata vaults,
         address specifiedPayoutAddress,
         bytes32 priorMmrRoot,
         bytes32 newMmrRoot,
@@ -381,14 +327,14 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         uint256 totalSwapAmount,
         bytes calldata proof,
         bytes calldata compressedBlockLeaves,
-        ProposedSwap calldata overwriteSwap
+        Types.ProposedSwap calldata overwriteSwap
     ) external {
         // [0] validate overwrite swap exists and is completed
-        validateSwapCommitment(overwriteSwap);
-        if (overwriteSwap.state != SwapState.Completed) revert CannotOverwriteOnGoingSwap();
+        CommitmentVerificationLib.validateSwapCommitment(overwriteSwap, swapCommitments);
+        if (overwriteSwap.state != Types.SwapState.Completed) revert Errors.CannotOverwriteOnGoingSwap();
 
         // [1] validate swap proof
-        (ProposedSwap memory swap, bytes32 updatedSwapHash) = validateSwap(
+        (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) = validateSwap(
             overwriteSwap.swapIndex,
             proposedBlockHash,
             proposedBlockHeight,
@@ -405,59 +351,60 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
         // [2] update swap commitments with updated swap hash
         swapCommitments[overwriteSwap.swapIndex] = updatedSwapHash;
-        emit SwapUpdated(swap);
+        emit Events.SwapUpdated(swap);
     }
 
     function releaseLiquidity(
-        ProposedSwap calldata swap,
+        Types.ProposedSwap calldata swap,
         bytes32[] calldata bitcoinBlockInclusionProof,
-        DepositVault[] calldata utilizedVaults
+        Types.DepositVault[] calldata utilizedVaults
     ) external {
         // [0] validate swap exists
-        validateSwapCommitment(swap);
+        CommitmentVerificationLib.validateSwapCommitment(swap, swapCommitments);
 
         // [1] validate swap has been proved
-        if (swap.state != SwapState.Proved) {
-            revert SwapNotProved();
+        if (swap.state != Types.SwapState.Proved) {
+            revert Errors.SwapNotProved();
         }
 
         // [2] ensure challenge period has passed since proof submission
         if (block.timestamp < swap.liquidityUnlockTimestamp) {
-            revert StillInChallengePeriod();
+            revert Errors.StillInChallengePeriod();
         }
 
         // [3] ensure swap block is still part of longest chain
         if (!proveBlockInclusion(swap.proposedBlockLeaf, bitcoinBlockInclusionProof))
-            revert InvalidBlockInclusionProof();
+            revert Errors.InvalidBlockInclusionProof();
 
         // [4] ensure all utilized vaults hash to the aggregate vault commitment
-        bytes32 aggregateVaultCommitmentHash = validateDepositVaultCommitments(utilizedVaults);
-        if (aggregateVaultCommitmentHash != swap.aggregateVaultCommitment) revert InvalidVaultCommitment();
+        bytes32 aggregateVaultCommitmentHash = CommitmentVerificationLib.validateDepositVaultCommitments(
+            utilizedVaults,
+            vaultCommitments
+        );
+        if (aggregateVaultCommitmentHash != swap.aggregateVaultCommitment) revert Errors.InvalidVaultCommitment();
 
         // [5] empty deposit amounts for all associated deposit vaults
         for (uint256 i = 0; i < utilizedVaults.length; i++) {
-            DepositVault memory updatedVault = utilizedVaults[i];
+            Types.DepositVault memory updatedVault = utilizedVaults[i];
             updatedVault.depositAmount = 0;
             updatedVault.depositFee = 0;
-            vaultCommitments[updatedVault.vaultIndex] = hashDepositVault(updatedVault);
+            vaultCommitments[updatedVault.vaultIndex] = CommitmentVerificationLib.hashDepositVault(updatedVault);
         }
 
         // [6] update completed swap hash
-        ProposedSwap memory updatedSwap = swap;
-        updatedSwap.state = SwapState.Completed;
-        bytes32 updatedSwapHash = hashSwap(updatedSwap);
+        Types.ProposedSwap memory updatedSwap = swap;
+        updatedSwap.state = Types.SwapState.Completed;
+        bytes32 updatedSwapHash = CommitmentVerificationLib.hashSwap(updatedSwap);
         swapCommitments[swap.swapIndex] = updatedSwapHash;
 
         // [7] add protocol fee to accumulated fee balance
         accumulatedFeeBalance += swap.totalSwapFee;
 
         // [8] emit swap updated
-        emit SwapUpdated(updatedSwap);
+        emit Events.SwapUpdated(updatedSwap);
 
         // [9] release funds to buyers ETH payout address
-        if (!DEPOSIT_TOKEN.transfer(swap.specifiedPayoutAddress, swap.totalSwapAmount)) {
-            revert TransferFailed();
-        }
+        if (!DEPOSIT_TOKEN.transfer(swap.specifiedPayoutAddress, swap.totalSwapAmount)) revert Errors.TransferFailed();
     }
 
     //--------- READ FUNCTIONS ---------//
@@ -476,53 +423,5 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
     function getSwapCommitment(uint256 swapIndex) public view returns (bytes32) {
         return swapCommitments[swapIndex];
-    }
-
-    //--------- INTERNAL FUNCTIONS ---------//
-
-    function hashDepositVault(DepositVault memory vault) public pure returns (bytes32) {
-        return EfficientHashLib.hash(abi.encode(vault));
-    }
-
-    function hashSwap(ProposedSwap memory swap) public pure returns (bytes32) {
-        return EfficientHashLib.hash(abi.encode(swap));
-    }
-
-    /// @notice Validates that a scriptPubKey follows the P2WPKH format (OP_0(0x00) + OP_PUSHBYTES_20(0x14) + <20-byte-pubkey-hash>)
-    function validateP2WPKHScriptPubKey(bytes22 scriptPubKey) public pure returns (bool) {
-        return scriptPubKey[0] == 0x00 && scriptPubKey[1] == 0x14;
-    }
-
-    function validateDepositVaultCommitment(DepositVault calldata vault) public view returns (bytes32) {
-        bytes32 vaultHash = hashDepositVault(vault);
-        if (vaultHash != vaultCommitments[vault.vaultIndex]) {
-            revert DepositVaultDoesNotExist();
-        }
-        return vaultHash;
-    }
-
-    function validateSwapCommitment(ProposedSwap calldata swap) public view returns (bytes32) {
-        bytes32 swapHash = hashSwap(swap);
-        if (swapHash != swapCommitments[swap.swapIndex]) {
-            revert SwapDoesNotExist();
-        }
-        return swapHash;
-    }
-
-    function validateDepositVaultCommitments(DepositVault[] calldata vaults) public view returns (bytes32) {
-        bytes32[] memory vaultHashes = new bytes32[](vaults.length);
-        for (uint256 i = 0; i < vaults.length; i++) {
-            vaultHashes[i] = validateDepositVaultCommitment(vaults[i]);
-        }
-        return EfficientHashLib.hash(vaultHashes);
-    }
-
-    /// @notice Calculates protocol fee for a given deposit amount
-    /// @param amount The amount being deposited/swapped
-    /// @return protocolFee The calculated protocol fee, either 0.1% or MIN_PROTOCOL_FEE, whichever is larger
-    function calculateFeeFromAmount(uint256 amount) public pure returns (uint256 protocolFee) {
-        // [0] return $0.1 or 0.1% of swap value, whatever is larger
-        protocolFee = (amount * PROTOCOL_FEE_BP) / 10e3; // bpScale value
-        if (protocolFee < MIN_PROTOCOL_FEE) protocolFee = MIN_PROTOCOL_FEE;
     }
 }

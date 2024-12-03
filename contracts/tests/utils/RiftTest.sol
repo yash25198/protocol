@@ -7,6 +7,9 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {SP1MockVerifier} from "@sp1-contracts/SP1MockVerifier.sol";
 import {Vm} from "forge-std/Vm.sol";
 
+import {MarketLib} from "../../src/libraries/MarketLib.sol";
+import {CommitmentVerificationLib} from "../../src/libraries/CommitmentVerificationLib.sol";
+import {Types} from "../../src/libraries/Types.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {MockUSDT} from "./MockUSDT.sol";
@@ -462,7 +465,7 @@ contract RiftTest is Test, PRNG {
         verifier = new SP1MockVerifier();
 
         bytes32 mmrRoot = keccak256(abi.encodePacked("mmr root"));
-        BitcoinLightClient.BlockLeaf memory initialCheckpointLeaf = BitcoinLightClient.BlockLeaf({
+        Types.BlockLeaf memory initialCheckpointLeaf = Types.BlockLeaf({
             blockHash: keccak256(abi.encodePacked("initial block")),
             height: 0,
             cumulativeChainwork: 0
@@ -493,19 +496,19 @@ contract RiftTest is Test, PRNG {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
     }
 
-    function _extractVaultFromLogs(Vm.Log[] memory logs) internal view returns (RiftExchange.DepositVault memory) {
+    function _extractVaultFromLogs(Vm.Log[] memory logs) internal view returns (Types.DepositVault memory) {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == VAULT_UPDATED_TOPIC) {
-                return abi.decode(logs[i].data, (RiftExchange.DepositVault));
+                return abi.decode(logs[i].data, (Types.DepositVault));
             }
         }
         revert("Vault not found");
     }
 
-    function _extractSwapFromLogs(Vm.Log[] memory logs) internal view returns (RiftExchange.ProposedSwap memory) {
+    function _extractSwapFromLogs(Vm.Log[] memory logs) internal view returns (Types.ProposedSwap memory) {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == SWAP_UPDATED_TOPIC) {
-                return abi.decode(logs[i].data, (RiftExchange.ProposedSwap));
+                return abi.decode(logs[i].data, (Types.ProposedSwap));
             }
         }
         revert("Swap not found");
@@ -514,7 +517,7 @@ contract RiftTest is Test, PRNG {
     function _depositLiquidityWithAssertions(
         uint256 depositAmount,
         uint64 expectedSats
-    ) internal returns (RiftExchange.DepositVault memory) {
+    ) internal returns (Types.DepositVault memory) {
         // [1] mint and approve deposit token
         mockUSDT.mint(address(this), depositAmount);
         mockUSDT.approve(address(exchange), depositAmount);
@@ -522,22 +525,25 @@ contract RiftTest is Test, PRNG {
         // [2] generate a scriptPubKey starting with a valid P2WPKH prefix (0x0014)
         bytes22 btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
 
+        bytes32 depositSalt = bytes32(keccak256(abi.encode(_random())));
+
         // [3] test deposit
         vm.recordLogs();
         exchange.depositLiquidity({
             specifiedPayoutAddress: address(this),
             initialDepositAmount: depositAmount,
             expectedSats: expectedSats,
-            btcPayoutScriptPubKey: btcPayoutScriptPubKey
+            btcPayoutScriptPubKey: btcPayoutScriptPubKey,
+            depositSalt: depositSalt
         });
 
         // [4] grab the logs, find the vault
-        RiftExchange.DepositVault memory createdVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory createdVault = _extractVaultFromLogs(vm.getRecordedLogs());
         uint256 vaultIndex = exchange.getVaultCommitmentsLength() - 1;
         bytes32 commitment = exchange.getVaultCommitment(vaultIndex);
 
         // [5] verify "offchain" calculated commitment matches stored vault commitment
-        bytes32 offchainCommitment = exchange.hashDepositVault(createdVault);
+        bytes32 offchainCommitment = CommitmentVerificationLib.hashDepositVault(createdVault);
         assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
 
         // [6] verify vault index

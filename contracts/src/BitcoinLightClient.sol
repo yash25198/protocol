@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity ^0.8.27;
 
+import {Types} from "./libraries/Types.sol";
+import {Events} from "./libraries/Events.sol";
+
+import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
 import {MerkleProofLib} from "solady/utils/MerkleProofLib.sol";
 import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 
-error InvalidLeavesCommitment();
-
 /**
  * @title BitcoinLightClient
- * @notice A Bitcoin client implementation that maintains a Merkle Mountain Range (MMR)
+ * @notice A Bitcoin light client implementation that maintains a Merkle Mountain Range (MMR)
  * of Bitcoin block headers for verification purposes
  *
  * Each block is stored as a leaf of the MMR containing:
@@ -17,24 +19,16 @@ error InvalidLeavesCommitment();
  * - Cumulative chainwork
  * Updates to the MMR root rely on a ZK proof that the new leaves satisfy the Bitcoin Consensus rules.
  */
-contract BitcoinLightClient {
+abstract contract BitcoinLightClient {
     bytes32 public mmrRoot;
-    BlockLeaf public initialCheckpointLeaf;
-
-    struct BlockLeaf {
-        bytes32 blockHash;
-        uint64 height;
-        uint256 cumulativeChainwork;
-    }
-
-    event BlockTreeUpdated(bytes32 treeRoot);
+    Types.BlockLeaf public initialCheckpointLeaf;
 
     /**
      * @notice Initializes the light client with an MMR root and initial checkpoint
      * @param _mmrRoot The initial MMR root
      * @param _initialCheckpointLeaf The initial checkpoint block leaf
      */
-    constructor(bytes32 _mmrRoot, BlockLeaf memory _initialCheckpointLeaf) {
+    constructor(bytes32 _mmrRoot, Types.BlockLeaf memory _initialCheckpointLeaf) {
         mmrRoot = _mmrRoot;
         initialCheckpointLeaf = _initialCheckpointLeaf;
     }
@@ -51,38 +45,14 @@ contract BitcoinLightClient {
      */
     function updateRoot(bytes32 priorMmrRoot, bytes32 newMmrRoot) internal {
         if (priorMmrRoot != mmrRoot || priorMmrRoot == newMmrRoot) return;
-
         mmrRoot = newMmrRoot;
-        emit BlockTreeUpdated(newMmrRoot);
+        emit Events.BlockTreeUpdated(newMmrRoot);
     }
 
-    /**
-     * @notice Verifies a block is included in the current MMR tree
-     * @param blockLeaf The block leaf to verify inclusion for
-     * @param inclusionProof The MMR proof for inclusion. Contains sibling hashes that are:
-     *        - Combined with the leaf until reaching a peak
-     *        - Then combined with other peaks to form the bagged peaks
-     *        - Finally combined with the leaf count to form the root
-     * @return bool True if the block is included in the current tree
-     */
     function proveBlockInclusion(
-        BlockLeaf memory blockLeaf,
+        Types.BlockLeaf memory blockLeaf,
         bytes32[] calldata inclusionProof
     ) public view returns (bool) {
-        return MerkleProofLib.verify(inclusionProof, mmrRoot, buildLeafCommitment(blockLeaf));
-    }
-
-    /**
-     * @notice Builds a commitment leaf from a BlockLeaf struct
-     * @param blockLeaf The block leaf to build a commitment for
-     * @return bytes32 The commitment hash
-     */
-    function buildLeafCommitment(BlockLeaf memory blockLeaf) public pure returns (bytes32) {
-        return
-            EfficientHashLib.hash(
-                blockLeaf.blockHash,
-                bytes32(uint256(blockLeaf.height)),
-                bytes32(blockLeaf.cumulativeChainwork)
-            );
+        return LightClientVerificationLib.proveBlockInclusion(blockLeaf, inclusionProof, mmrRoot);
     }
 }
