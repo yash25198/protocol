@@ -1,7 +1,42 @@
-use crate::types::Header;
 use crypto_bigint::CheckedAdd;
 use crypto_bigint::Encoding;
 use crypto_bigint::U256;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Header(pub [u8; 80]);
+
+impl Header {
+    pub fn as_bytes(&self) -> [u8; 80] {
+        self.0
+    }
+}
+
+impl Serialize for Header {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Convert array to Vec and serialize
+        self.0.to_vec().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Header {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let vec: Vec<u8> = Vec::deserialize(deserializer)?;
+        if vec.len() != 80 {
+            return Err(D::Error::custom("Header must be 80 bytes"));
+        }
+        let mut array = [0u8; 80];
+        array.copy_from_slice(&vec);
+        Ok(Header(array))
+    }
+}
 
 // parent_ variables are assumed to be valid in the context of the header chain
 // panics on any failures
@@ -51,14 +86,16 @@ pub fn validate_header_chain(
             "Header fails PoW check"
         );
 
-        retarget_header = Header::from_bytes(next_retarget.unwrap());
+        retarget_header = Header(next_retarget.unwrap());
     }
 }
 
+// Returns the cumulative chainwork for each new header and the final cumulative chainwork for the chain
 pub fn calculate_cumulative_work(
     parent_cumulative_work: U256,
     header_chain: &[Header],
 ) -> (Vec<U256>, U256) {
+    assert!(!header_chain.is_empty(), "Header chain must not be empty");
     let works: Vec<U256> = header_chain
         .iter()
         .scan(parent_cumulative_work, |acc, header| {
@@ -72,15 +109,14 @@ pub fn calculate_cumulative_work(
         .collect();
 
     let final_work = works.last().copied().unwrap_or(parent_cumulative_work);
-    let mut all_works = Vec::with_capacity(works.len() + 1);
-    all_works.push(parent_cumulative_work);
+    let mut all_works = Vec::with_capacity(works.len());
     all_works.extend(works);
 
     (all_works, final_work)
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /*
     Block Header (80 bytes)
     Field Name          Bytes   Byte Range
@@ -92,50 +128,25 @@ mod tests {
     Nonce               4       76-79
     */
     use super::*;
-    use once_cell::sync::Lazy;
-    use serde_json::Value;
 
-    static TEST_HEADERS: Lazy<Vec<(u32, Header)>> = Lazy::new(load_test_headers);
-    const TEST_DATA: &str = include_str!("../../../test-data/data/blocks.json");
-
-    fn load_test_headers() -> Vec<(u32, Header)> {
-        let start = std::time::Instant::now();
-        let json: Value = serde_json::from_str(TEST_DATA).expect("Failed to parse JSON");
-        let obj = json.as_object().expect("JSON must be an object");
-
-        let mut headers = Vec::with_capacity(obj.len());
-        for (height_str, header_hex) in obj {
-            let height = height_str.parse::<u32>().expect("Invalid height value");
-            if let Value::String(hex_str) = header_hex {
-                let bytes = hex::decode(hex_str).expect("Invalid hex string");
-                headers.push((
-                    height,
-                    Header::from_bytes(bytes.try_into().expect("Invalid header length")),
-                ));
-            }
-        }
-        headers.sort_by_key(|(height, _)| *height);
-        println!("Time to load headers: {:?}", start.elapsed());
-        headers
-    }
+    use btc_light_client_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_HEADERS};
 
     #[test]
     fn test_validate_header_chain_genesis_step() {
-        let genesis_header = &TEST_HEADERS[0].1;
-        let first_header = &TEST_HEADERS[1].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
 
-        let header_chain: [Header; 1] = [*first_header];
+        let header_chain: Vec<Header> = vec![Header(TEST_HEADERS[1].1)];
 
         validate_header_chain(0, genesis_header, genesis_header, &header_chain);
     }
 
     #[test]
     fn test_validate_header_chain_first_10_blocks() {
-        let genesis_header = &TEST_HEADERS[0].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
 
         let header_chain: Vec<Header> = TEST_HEADERS[1..10]
             .iter()
-            .map(|(_, header)| *header)
+            .map(|(_, header)| Header(*header))
             .collect();
 
         validate_header_chain(0, genesis_header, genesis_header, &header_chain);
@@ -143,33 +154,34 @@ mod tests {
 
     #[test]
     fn test_validate_header_chain_first_100_blocks() {
-        let genesis_header = &TEST_HEADERS[0].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
 
         let header_chain: Vec<Header> = TEST_HEADERS[1..100]
             .iter()
-            .map(|(_, header)| *header)
+            .map(|(_, header)| Header(*header))
             .collect();
+
         validate_header_chain(0, genesis_header, genesis_header, &header_chain);
     }
 
     #[test]
     fn test_validate_header_chain_first_1000_blocks() {
-        let genesis_header = &TEST_HEADERS[0].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
 
         let header_chain: Vec<Header> = TEST_HEADERS[1..1000]
             .iter()
-            .map(|(_, header)| *header)
+            .map(|(_, header)| Header(*header))
             .collect();
         validate_header_chain(0, genesis_header, genesis_header, &header_chain);
     }
 
     #[test]
     fn test_validate_header_chain_first_10_000_blocks() {
-        let genesis_header = &TEST_HEADERS[0].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
 
         let header_chain: Vec<Header> = TEST_HEADERS[1..10000]
             .iter()
-            .map(|(_, header)| *header)
+            .map(|(_, header)| Header(*header))
             .collect();
         validate_header_chain(0, genesis_header, genesis_header, &header_chain);
     }
@@ -177,10 +189,10 @@ mod tests {
     #[test]
     #[ignore = "compute heavy"]
     fn test_validate_header_chain_first_100_000_blocks() {
-        let genesis_header = &TEST_HEADERS[0].1;
-        let header_chain: Vec<Header> = TEST_HEADERS[1..100000]
+        let genesis_header = &Header(EXHAUSTIVE_TEST_HEADERS[0].1);
+        let header_chain: Vec<Header> = EXHAUSTIVE_TEST_HEADERS[1..100000]
             .iter()
-            .map(|(_, header)| *header)
+            .map(|(_, header)| Header(*header))
             .collect();
         validate_header_chain(0, genesis_header, genesis_header, &header_chain);
     }
@@ -188,10 +200,10 @@ mod tests {
     #[test]
     #[ignore = "compute heavy"]
     fn test_validate_header_chain_first_800_000_blocks() {
-        let genesis_header = &TEST_HEADERS[0].1;
-        let header_chain: Vec<Header> = TEST_HEADERS[1..800000]
+        let genesis_header = &Header(EXHAUSTIVE_TEST_HEADERS[0].1);
+        let header_chain: Vec<Header> = EXHAUSTIVE_TEST_HEADERS[1..800000]
             .iter()
-            .map(|(_, header)| *header)
+            .map(|(_, header)| Header(*header))
             .collect();
         validate_header_chain(0, genesis_header, genesis_header, &header_chain);
     }
@@ -199,7 +211,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Header chain must not be empty")]
     fn test_validate_header_chain_empty() {
-        let parent_header = &TEST_HEADERS[0].1;
+        let parent_header = &Header(TEST_HEADERS[0].1);
 
         validate_header_chain(
             0,
@@ -216,12 +228,12 @@ mod tests {
         // Test with a window of headers
         let window = &TEST_HEADERS[..window_size];
         let parent_work = U256::from_u8(0);
-        let header_chain: Vec<Header> = window.iter().map(|(_, header)| *header).collect();
+        let header_chain: Vec<Header> = window.iter().map(|(_, header)| Header(*header)).collect();
 
         let (all_works, final_work) = calculate_cumulative_work(parent_work, &header_chain);
 
         // Basic sanity checks
-        assert_eq!(all_works.len(), header_chain.len() + 1);
+        assert_eq!(all_works.len(), header_chain.len());
         assert_eq!(*all_works.last().unwrap(), final_work);
 
         // Verify work is monotonically increasing
@@ -233,12 +245,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "Header fails PoW check")]
     fn test_validate_header_chain_invalid_pow() {
-        let genesis_header = &TEST_HEADERS[0].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
 
         // Modify the nonce to invalidate PoW (bytes 76..=79)
-        let mut header_bytes = TEST_HEADERS[1].1.as_bytes();
+        let mut header_bytes = Header(TEST_HEADERS[1].1).as_bytes();
         header_bytes[76..=79].copy_from_slice(&[0; 4]);
-        let invalid_header = Header::from_bytes(header_bytes.try_into().unwrap());
+        let invalid_header = Header(header_bytes.try_into().unwrap());
 
         validate_header_chain(0, genesis_header, genesis_header, &[invalid_header]);
     }
@@ -246,12 +258,12 @@ mod tests {
     #[test]
     #[should_panic(expected = "Header chain link is not connected")]
     fn test_validate_header_chain_broken_link() {
-        let genesis_header = &TEST_HEADERS[0].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
 
         // Modify the previous block hash (bytes 4..=35)
-        let mut header_bytes = TEST_HEADERS[1].1.as_bytes();
+        let mut header_bytes = Header(TEST_HEADERS[1].1).as_bytes();
         header_bytes[4..=35].copy_from_slice(&[190; 32]);
-        let disconnected_header = Header::from_bytes(header_bytes.try_into().unwrap());
+        let disconnected_header = Header(header_bytes.try_into().unwrap());
 
         validate_header_chain(0, genesis_header, genesis_header, &[disconnected_header]);
     }
@@ -259,13 +271,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "Failed to validate work requirement")]
     fn test_validate_header_chain_invalid_difficulty() {
-        let genesis_header = &TEST_HEADERS[0].1;
-        let mut invalid_diff_header = TEST_HEADERS[1].1;
+        let genesis_header = &Header(TEST_HEADERS[0].1);
+        let mut invalid_diff_header = Header(TEST_HEADERS[1].1);
 
         // Modify bits field (bytes 72..=75)
         let mut header_bytes = invalid_diff_header.as_bytes();
         header_bytes[72..=75].copy_from_slice(&[0xff; 4]);
-        invalid_diff_header = Header::from_bytes(header_bytes.try_into().unwrap());
+        invalid_diff_header = Header(header_bytes.try_into().unwrap());
 
         validate_header_chain(0, genesis_header, genesis_header, &[invalid_diff_header]);
     }
@@ -274,10 +286,10 @@ mod tests {
     #[should_panic]
     fn test_calculate_cumulative_work_overflow() {
         // Create a header that would cause work calculation overflow
-        let mut overflow_header = TEST_HEADERS[0].1;
+        let mut overflow_header = Header(TEST_HEADERS[0].1);
         let mut header_bytes = overflow_header.as_bytes();
         header_bytes[28..32].copy_from_slice(&[0x01; 4]);
-        overflow_header = Header::from_bytes(header_bytes.try_into().unwrap());
+        overflow_header = Header(header_bytes.try_into().unwrap());
 
         let max_work = U256::MAX.wrapping_sub(&U256::ONE);
         calculate_cumulative_work(max_work, &[overflow_header]);

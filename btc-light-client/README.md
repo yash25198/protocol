@@ -14,6 +14,11 @@ Bitcoin light client that utilizes [Bitcoin Core](https://github.com/bitcoin/bit
 cargo test -p btc-light-client-core --release -- --include-ignored
 ```
 
+#### Run Cycle Benchmark
+```
+cargo run --release benchmark
+```
+
 ## SP1 Utilities 
 
 ### Build the Program
