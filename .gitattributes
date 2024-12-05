@@ -1,1 +1,12 @@
 test-data/data/* filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799996.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799999.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799990.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799993.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799994.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799995.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_800000.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799991.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799992.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799997.hex filter=lfs diff=lfs merge=lfs -text
+test-data/data/blocks/block_799998.hex filter=lfs diff=lfs merge=lfs -text
