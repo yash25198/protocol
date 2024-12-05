@@ -1,0 +1,10 @@
+[package]
+version = "0.1.0"
+name = "bitcoin-light-client-program"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+bincode = { workspace = true} 
+bitcoin-light-client-core = { workspace = true }
+sp1-zkvm = {workspace = true } 

@@ -1,0 +1,13 @@
+[package]
+name = "rift-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { workspace = true }
+rift-core = { path = "../core" }
+bitcoin = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+crypto-bigint = { workspace = true }
+sp1-sdk = { workspace = true }

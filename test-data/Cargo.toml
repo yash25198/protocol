@@ -1,0 +1,10 @@
+[package]
+version = "0.1.0"
+name = "test-data-utils"
+edition = "2021"
+
+[dependencies]
+serde_json = { workspace = true }
+serde = { workspace = true }
+hex = { workspace = true }
+once_cell = { workspace = true }

@@ -1,0 +1,27 @@
+[package]
+version = "0.1.0"
+name = "btc-light-client-script"
+edition = "2021"
+default-run = "benchmark"
+
+[[bin]]
+name = "benchmark"
+path = "src/bin/benchmark.rs"
+
+[dependencies]
+bitcoin-light-client-core = { workspace = true }
+test-data-utils = { workspace = true }
+
+sp1-sdk = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
+alloy-sol-types = { workspace = true }
+once_cell = { workspace = true }
+accumulators = { workspace = true }
+prettytable = { workspace = true }
+
+[build-dependencies]
+sp1-helper = { workspace = true }

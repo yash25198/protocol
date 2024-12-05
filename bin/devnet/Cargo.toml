@@ -1,0 +1,8 @@
+[package]
+name = "devnet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+exclude.workspace = true
+
+[dependencies]

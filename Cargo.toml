@@ -1,0 +1,55 @@
+[workspace]
+members = [
+  "bin/benchmark-light-client", "bin/devnet",
+  # "bin/e2e-tests",
+  # "bin/hypernode",
+  "crates/bitcoin-light-client-core",
+  "crates/bitcoin-light-client-program",
+  # "crates/rift-sdk",
+  # "crates/settlement-core",
+  # "crates/settlement-program",
+  "test-data"
+]
+
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+exclude = [".github/"]
+
+[workspace.dependencies]
+# Internal dependencies
+bitcoin-light-client-core = { path = "./crates/bitcoin-light-client-core" }
+bitcoin-light-client-program = { path = "./crates/bitcoin-light-client-program" }
+test-data-utils = { path = "./test-data" }
+
+# SP1 dependencies
+sp1-helper = "3.0.0"
+sp1-sdk = "3.0.0"
+sp1-zkvm = "3.0.0-rc4"
+
+# External dependencies
+accumulators = { version = "0.4", features = ["all"] }
+alloy-sol-types = "0.7.7"
+bincode = "1.3"
+bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"}
+clap = { version = "4.0", features = ["derive", "env"] }
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", branch = "patch-v0.5.5" }
+hex = "0.4.3"
+once_cell = "1.18"
+prettytable = "0.10"
+serde = { version = "1.0.200", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", branch = "patch-v0.10.8" }
+thiserror = "1.0.63"
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "tiny_keccak-v2.0.2-patch-v1" }
+tokio = { version = "1.0", features = ["rt", "macros"] }
+tracing = "0.1.40"
+
+[patch.crates-io]
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", package= "crypto-bigint", branch = "patch-v0.5.5" }
+sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", branch = "patch-v0.10.8" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "tiny_keccak-v2.0.2-patch-v1" }
+
