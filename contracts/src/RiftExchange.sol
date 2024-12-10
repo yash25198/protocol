@@ -15,8 +15,6 @@ import {CommitmentVerificationLib} from "./libraries/CommitmentVerificationLib.s
 import {MarketLib} from "./libraries/MarketLib.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
 
-// TODO: Make unnecessary public functions internal, setup interfaces for light client and exchange
-// all pure functions should be behind a library in a seperate file
 /**
  * @title RiftExchange
  * @author alpinevm <https://github.com/alpinevm>
