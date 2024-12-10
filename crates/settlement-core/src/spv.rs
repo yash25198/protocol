@@ -1,4 +1,4 @@
-use crate::Sha256Digest;
+use crate::types::Sha256Digest;
 use bitcoin_core_rs::sha256;
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +101,4 @@ pub fn verify_bitcoin_txn_merkle_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use btc_light_client_utils::;
-
 }

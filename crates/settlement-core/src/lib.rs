@@ -1,10 +1,5 @@
-use alloy_sol_types::sol;
-use crypto_bigint::U256;
-use serde::{Deserialize, Serialize};
+#![allow(clippy::too_many_arguments)]
 pub mod payments;
 pub mod spv;
+pub mod types;
 pub mod vaults;
-
-sol!("../../../contracts/src/libraries/Types.sol");
-
-pub type Sha256Digest = [u8; 32];

@@ -1,6 +1,6 @@
-use crate::Types::DepositVault;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::{Transaction, TxOut};
+/*
 
 // Constants
 const MAX_INPUT_COUNT: u64 = 1;
@@ -54,3 +54,5 @@ pub fn assert_bitcoin_payment(
         order_nonce,
     );
 }
+
+*/

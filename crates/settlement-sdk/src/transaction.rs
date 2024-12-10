@@ -14,13 +14,13 @@ use bitcoin::{
     ScriptBuf, Sequence, TxOut, Txid,
 };
 
+/*
+
 use crypto_bigint::{NonZero, U256};
 use rift_core::btc_light_client::AsLittleEndianBytes;
 use rift_core::btc_light_client::Block as RiftOptimizedBlock;
 use rift_core::lp::LiquidityReservation;
 use std::str::FromStr;
-
-// Assuming you have a crate named `rift_lib` with these types
 
 pub struct P2WPKHBitcoinWallet {
     pub secret_key: SecretKey,
@@ -149,10 +149,12 @@ pub fn build_rift_payment_transaction(
 
     // Add change output
     let change_amount = vin_sats - total_lp_sum_btc - fee_sats;
-    tx_outs.push(TxOut {
-        value: Amount::from_sat(change_amount),
-        script_pubkey: wallet.get_p2wpkh_script(),
-    });
+    if change_amount > 0 {
+        tx_outs.push(TxOut {
+            value: Amount::from_sat(change_amount),
+            script_pubkey: wallet.get_p2wpkh_script(),
+        });
+    }
 
     // Create input
     let outpoint = OutPoint::new(
@@ -224,3 +226,5 @@ fn sign_transaction(
 
     tx.clone()
 }
+
+*/
