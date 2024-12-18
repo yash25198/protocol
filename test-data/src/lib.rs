@@ -1,9 +1,39 @@
+use bitcoin::consensus::encode::deserialize;
+use bitcoin::Block;
+use hex::FromHex;
+
 use once_cell::sync::Lazy;
 use serde_json::Value;
 
 pub static TEST_HEADERS: Lazy<Vec<(u32, [u8; 80])>> = Lazy::new(|| load_test_headers(false));
 pub static EXHAUSTIVE_TEST_HEADERS: Lazy<Vec<(u32, [u8; 80])>> =
     Lazy::new(|| load_test_headers(true));
+
+pub static TEST_BLOCKS: Lazy<Vec<Block>> = Lazy::new(load_test_blocks);
+
+fn load_test_blocks() -> Vec<Block> {
+    let block_hex_strings = [
+        include_str!("../data/blocks/block_799990.hex"),
+        include_str!("../data/blocks/block_799991.hex"),
+        include_str!("../data/blocks/block_799992.hex"),
+        include_str!("../data/blocks/block_799993.hex"),
+        include_str!("../data/blocks/block_799994.hex"),
+        include_str!("../data/blocks/block_799995.hex"),
+        include_str!("../data/blocks/block_799996.hex"),
+        include_str!("../data/blocks/block_799997.hex"),
+        include_str!("../data/blocks/block_799998.hex"),
+        include_str!("../data/blocks/block_799999.hex"),
+        include_str!("../data/blocks/block_800000.hex"),
+    ];
+
+    let mut blocks = Vec::new();
+    for hex_string in block_hex_strings {
+        let block_bytes = Vec::<u8>::from_hex(hex_string).expect("Failed to parse hex");
+        let block = deserialize::<Block>(&block_bytes).unwrap();
+        blocks.push(block);
+    }
+    blocks
+}
 
 fn load_test_headers(exhaustive: bool) -> Vec<(u32, [u8; 80])> {
     const INITIAL_BLOCK_HEADERS_STR: &str = include_str!("../data/headers_0_9999.json");

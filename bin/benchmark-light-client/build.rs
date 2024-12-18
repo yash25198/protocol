@@ -1,8 +1,10 @@
 use sp1_helper::build_program_with_args;
+use sp1_helper::BuildArgs;
 
 fn main() {
-    build_program_with_args(
-        "../../crates/bitcoin-light-client-program",
-        Default::default(),
-    )
+    let args = BuildArgs {
+        docker: false,
+        ..Default::default()
+    };
+    build_program_with_args("../../crates/rift-program", args);
 }

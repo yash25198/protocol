@@ -33,22 +33,17 @@ pub struct MerkleMountainRange<H: Hasher, S: MMRStorageStrategy> {
 
 impl<H: Hasher, S: MMRStorageStrategy> MerkleMountainRange<H, S> {
     pub fn new() -> Self {
-        MerkleMountainRange {
-            peaks: vec![],
-            leaf_count: 0,
-            data: S::new(),
-            _hasher: std::marker::PhantomData,
-        }
+        Self::default()
     }
 
     fn update_mmr_peaks(&mut self, leaf: &Digest) {
         self.leaf_count += 1;
-        let mut current_peak = leaf.clone();
+        let mut current_peak = *leaf;
         let t = self.leaf_count.trailing_zeros() as usize;
 
         for _ in 0..t {
             let left_peak = self.peaks.pop().expect("No peak to pop");
-            current_peak = hash_nodes::<H>(&left_peak.as_ref(), &current_peak.as_ref());
+            current_peak = hash_nodes::<H>(left_peak.as_ref(), current_peak.as_ref());
         }
 
         self.peaks.push(current_peak);
@@ -71,7 +66,7 @@ impl<H: Hasher, S: MMRStorageStrategy> MerkleMountainRange<H, S> {
             new_mmr.update_mmr_peaks(leaf_hash);
         }
 
-        if new_mmr.get_root().as_ref() != expected_root.as_ref() {
+        if new_mmr.get_root() != *expected_root {
             panic!("Invalid MMR: root mismatch");
         }
     }
@@ -90,6 +85,17 @@ impl<H: Hasher, S: MMRStorageStrategy> MerkleMountainRange<H, S> {
         }
 
         heights
+    }
+}
+
+impl<H: Hasher, S: MMRStorageStrategy> Default for MerkleMountainRange<H, S> {
+    fn default() -> Self {
+        Self {
+            peaks: vec![],
+            leaf_count: 0,
+            data: S::new(),
+            _hasher: std::marker::PhantomData,
+        }
     }
 }
 
@@ -160,14 +166,14 @@ pub fn get_root<H: Hasher>(leaf_count: u32, bagged_peak: &Digest) -> Digest {
 
 pub fn bag_peaks<H: Hasher>(peaks: &[Digest]) -> Option<Digest> {
     peaks.iter().rev().fold(None, |acc, peak| match acc {
-        None => Some(peak.clone()),
-        Some(prev) => Some(hash_nodes::<H>(peak.as_ref(), &prev.as_ref())),
+        None => Some(*peak),
+        Some(prev) => Some(hash_nodes::<H>(peak.as_ref(), prev.as_ref())),
     })
 }
 
 pub type CompactMerkleMountainRange<H> = MerkleMountainRange<H, CompactMMR>;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct MMRProof {
     pub leaf_hash: Digest,
     pub leaf_index: u32,
@@ -189,7 +195,7 @@ impl MMRProof {
 /// Verify a proof for a leaf in the MMR
 pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
     // First verify the proof up to a peak
-    let mut current_hash = proof.leaf_hash.clone();
+    let mut current_hash = proof.leaf_hash;
 
     let mut leaf_index = proof.leaf_index;
     // Apply each proof element to get to a peak
@@ -197,9 +203,9 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
         let is_right = leaf_index % 2 == 1;
         leaf_index /= 2;
         current_hash = if is_right {
-            hash_nodes::<H>(&sibling.as_ref(), &current_hash.as_ref())
+            hash_nodes::<H>(sibling.as_ref(), current_hash.as_ref())
         } else {
-            hash_nodes::<H>(&current_hash.as_ref(), &sibling.as_ref())
+            hash_nodes::<H>(current_hash.as_ref(), sibling.as_ref())
         };
     }
 
@@ -212,7 +218,7 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
     let bagged_peaks = bag_peaks::<H>(&proof.peaks).unwrap();
 
     let computed_root = get_root::<H>(proof.leaf_count, &bagged_peaks);
-    computed_root.as_ref() == root.as_ref()
+    computed_root == *root
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ use crate::leaves::{BlockLeaf, BlockLeafCompressor};
 use crate::light_client::Header;
 use crate::mmr::{CompactMerkleMountainRange, MMRProof};
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BitcoinLightClientPublicInput {
     pub new_mmr_root: Digest,
     pub previous_mmr_root: Digest,
@@ -33,16 +33,20 @@ impl BitcoinLightClientPublicInput {
         }
     }
 
-    pub fn eth_abi_serialize(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(DIGEST_BYTE_COUNT * 3);
+    pub fn contract_serialize_length() -> usize {
+        DIGEST_BYTE_COUNT * 3
+    }
+
+    pub fn contract_serialize(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(Self::contract_serialize_length());
         bytes.extend_from_slice(&self.new_mmr_root);
         bytes.extend_from_slice(&self.previous_mmr_root);
         bytes.extend_from_slice(&self.new_leaves_commitment);
         bytes
     }
 
-    pub fn eth_abi_deserialize(bytes: &[u8]) -> Self {
-        assert!(bytes.len() == DIGEST_BYTE_COUNT * 3);
+    pub fn contract_deserialize(bytes: &[u8]) -> Self {
+        assert!(bytes.len() == Self::contract_serialize_length());
 
         let mut new_mmr_root = [0u8; DIGEST_BYTE_COUNT];
         let mut previous_mmr_root = [0u8; DIGEST_BYTE_COUNT];
@@ -89,6 +93,7 @@ fn validate_leaf_block_hashes(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_mmr_proofs<H: Hasher>(
     parent_leaf_hash: &Digest,
     previous_tip_leaf_hash: &Digest,
@@ -184,14 +189,14 @@ fn validate_chainwork(
     (new_chain_works, new_chain_cumulative_work)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BlockPosition {
     pub header: Header,
     pub leaf: BlockLeaf,
     pub inclusion_proof: MMRProof,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChainTransition {
     // Previous MMR state
     pub previous_mmr_root: Digest,
@@ -209,6 +214,7 @@ pub struct ChainTransition {
 }
 
 impl ChainTransition {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         previous_mmr_root: Digest,
         previous_mmr_bagged_peak: Digest,
@@ -367,8 +373,8 @@ mod tests {
         mmr.append(&genesis_leaf_hash);
         (
             genesis_client_index,
-            Header(genesis_header.clone()),
-            genesis_leaf.clone(),
+            Header(genesis_header),
+            genesis_leaf,
             client_mmr,
             mmr,
         )
@@ -381,7 +387,7 @@ mod tests {
             create_from_genesis().await;
         let new_headers: Vec<Header> = TEST_HEADERS[1..4]
             .iter()
-            .map(|(_, header)| Header(header.clone()))
+            .map(|(_, header)| Header(*header))
             .collect();
 
         let public_input = commit_new_chain::<Keccak256Hasher>(ChainTransition::new(
@@ -398,8 +404,8 @@ mod tests {
                 ),
             },
             BlockPosition {
-                header: genesis_header.clone(),
-                leaf: genesis_leaf.clone(),
+                header: genesis_header,
+                leaf: genesis_leaf,
                 inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(
                     &client_mmr
                         .get_proof(genesis_client_index, None)
@@ -408,8 +414,8 @@ mod tests {
                 ),
             },
             BlockPosition {
-                header: genesis_header.clone(),
-                leaf: genesis_leaf.clone(),
+                header: genesis_header,
+                leaf: genesis_leaf,
                 inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(
                     &client_mmr
                         .get_proof(genesis_client_index, None)

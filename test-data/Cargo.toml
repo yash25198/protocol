@@ -4,6 +4,7 @@ name = "test-data-utils"
 edition = "2021"
 
 [dependencies]
+bitcoin = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 hex = { workspace = true }

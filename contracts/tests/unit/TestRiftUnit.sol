@@ -4,13 +4,78 @@ pragma solidity ^0.8.27;
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {Constants} from "../../src/libraries/Constants.sol";
 import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
-import {CommitmentVerificationLib} from "../../src/libraries/CommitmentVerificationLib.sol";
+import "../../src/libraries/CommitmentVerificationLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {MarketLib} from "../../src/libraries/MarketLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
+import "forge-std/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
+    // hacky way to get nice formatting for the vault in logs
+    event VaultLog(Types.DepositVault vault);
+    event VaultCommitmentLog(bytes32 vaultCommitment);
+    event LogVaults(Types.DepositVault[] vaults);
+
+    // functional clone of validateDepositVaultCommitments, but doesn't attempt to validate the vaults existence in storage
+    // used to generate test data for circuits
+    function generateDepositVaultCommitment(Types.DepositVault[] memory vaults) internal pure returns (bytes32) {
+        bytes32[] memory vaultHashes = new bytes32[](vaults.length);
+        for (uint256 i = 0; i < vaults.length; i++) {
+            vaultHashes[i] = CommitmentVerificationLib.hashDepositVault(vaults[i]);
+        }
+        return EfficientHashLib.hash(vaultHashes);
+    }
+
+    // use to generate test data for circuits
+    function test_vaultCommitments(Types.DepositVault memory vault, uint256) public {
+        // uint64 max here so it can be set easily in rust
+        bound(vault.vaultIndex, 0, uint256(type(uint64).max));
+        bytes32 vault_commitment = CommitmentVerificationLib.hashDepositVault(vault);
+        emit VaultLog(vault);
+        emit VaultCommitmentLog(vault_commitment);
+    }
+
+    function constrainVault(
+        Types.DepositVault memory vault,
+        uint64 maxValue
+    ) internal pure returns (Types.DepositVault memory) {
+        return
+            Types.DepositVault({
+                vaultIndex: vault.vaultIndex % maxValue,
+                depositTimestamp: vault.depositTimestamp % maxValue,
+                depositAmount: vault.depositAmount % maxValue,
+                depositFee: vault.depositFee % maxValue,
+                expectedSats: vault.expectedSats % maxValue,
+                btcPayoutScriptPubKey: vault.btcPayoutScriptPubKey,
+                specifiedPayoutAddress: vault.specifiedPayoutAddress,
+                ownerAddress: vault.ownerAddress,
+                nonce: vault.nonce
+            });
+    }
+
+    // use to generate test data for circuits
+    function test_aggregateVaultCommitments(
+        Types.DepositVault[1] memory singleVaultSet,
+        Types.DepositVault[2] memory twoVaultSet,
+        uint256
+    ) public {
+        uint64 maxValue = type(uint64).max;
+
+        Types.DepositVault[] memory singleVaultSetArray = new Types.DepositVault[](1);
+        singleVaultSetArray[0] = constrainVault(singleVaultSet[0], maxValue);
+        bytes32 singleVaultCommitment = generateDepositVaultCommitment(singleVaultSetArray);
+        emit LogVaults(singleVaultSetArray);
+        emit VaultCommitmentLog(singleVaultCommitment);
+
+        Types.DepositVault[] memory twoVaultSetArray = new Types.DepositVault[](2);
+        twoVaultSetArray[0] = constrainVault(twoVaultSet[0], maxValue);
+        twoVaultSetArray[1] = constrainVault(twoVaultSet[1], maxValue);
+        bytes32 twoVaultCommitment = generateDepositVaultCommitment(twoVaultSetArray);
+        emit LogVaults(twoVaultSetArray);
+        emit VaultCommitmentLog(twoVaultCommitment);
+    }
+
     // Test that depositLiquidity appends a new commitment to the vaultCommitments array
     function testFuzz_depositLiquidity(uint256 depositAmount, uint64 expectedSats, uint256) public {
         // [0] bound deposit amount & expected sats

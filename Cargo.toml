@@ -1,14 +1,14 @@
 [workspace]
 members = [
-  "bin/benchmark-light-client", "bin/devnet",
-  # "bin/e2e-tests",
+  "bin/benchmark-light-client",
+  "bin/devnet",
   # "bin/hypernode",
   "crates/bitcoin-light-client-core",
-  "crates/bitcoin-light-client-program",
-  # "crates/rift-sdk",
-  "crates/settlement-core",
-  # "crates/settlement-program",
-  "test-data"
+  "crates/rift-sdk",
+  "crates/rift-core", 
+  "crates/rift-program",
+  "test-data",
+  "integration-tests"
 ]
 
 resolver = "2"
@@ -22,38 +22,40 @@ exclude = [".github/"]
 [workspace.dependencies]
 # Internal dependencies
 bitcoin-light-client-core = { path = "./crates/bitcoin-light-client-core" }
-bitcoin-light-client-program = { path = "./crates/bitcoin-light-client-program" }
-
-rift-core = { path = "./crates/settlement-core" }
-rift-sdk = { path = "./crates/settlement-sdk" }
+rift-core = { path = "./crates/rift-core" }
+rift-sdk = { path = "./crates/rift-sdk" }
+rift-program = {path = "./crates/rift-program"}
 
 test-data-utils = { path = "./test-data" }
 
 # SP1 dependencies
 sp1-helper = "3.0.0"
 sp1-sdk = "3.0.0"
-sp1-zkvm = "3.0.0-rc4"
+sp1-zkvm = "3.0.0"
 
 # External dependencies
+bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"}
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", branch = "patch-v0.5.5" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "tiny_keccak-v2.0.2-patch-v1" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", branch = "patch-v0.10.8" }
+bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1", default-features = false}
+
 accumulators = { version = "0.4", features = ["all"] }
 bincode = "1.3"
-bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"}
 clap = { version = "4.0", features = ["derive", "env"] }
-crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", branch = "patch-v0.5.5" }
 hex = "0.4.3"
 once_cell = "1.18"
 prettytable = "0.10"
-serde = { version = "1.0.200", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", branch = "patch-v0.10.8" }
+serde = { version = "1.0.200", features = ["derive"] }
+serde_json = { version = "1.0", features = ["alloc"] }
 thiserror = "1.0.63"
-tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "tiny_keccak-v2.0.2-patch-v1" }
 tracing = "0.1.40"
 
-alloy-sol-types = { version = "0.7", features = ["json"] }
-alloy = { version = "0.7", features = ["full", "node-bindings", "json"] }
+alloy-sol-types = { version = "0.8.0", features = ["json"] }
+alloy = { version = "0.8.0", features = ["full", "node-bindings", "json"] }
+
 bitcoind = "0.36.0"
-bitcoin = { version = "0.32.2", default-features = false }
+
 eyre = "0.6.12"
 tokio = {version="1.40.0", features=["full"]}
 log = "0.4.22"
@@ -66,4 +68,4 @@ futures-util = "0.3.30"
 crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", package= "crypto-bigint", branch = "patch-v0.5.5" }
 sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", branch = "patch-v0.10.8" }
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "tiny_keccak-v2.0.2-patch-v1" }
-
+secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-v0.29.1-v4.0.0" }

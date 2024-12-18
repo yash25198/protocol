@@ -10,6 +10,8 @@ path = "src/bin/benchmark.rs"
 
 [dependencies]
 bitcoin-light-client-core = { workspace = true }
+rift-program = { workspace = true }
+rift-core = { workspace = true }
 test-data-utils = { workspace = true }
 
 sp1-sdk = { workspace = true }

@@ -12,6 +12,12 @@ impl Header {
     }
 }
 
+impl Default for Header {
+    fn default() -> Self {
+        Header([0; 80])
+    }
+}
+
 impl Serialize for Header {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {SP1MockVerifier} from "@sp1-contracts/SP1MockVerifier.sol";
 import {Vm} from "forge-std/Vm.sol";
+import "forge-std/console.sol";
 
 import {MarketLib} from "../../src/libraries/MarketLib.sol";
 import {CommitmentVerificationLib} from "../../src/libraries/CommitmentVerificationLib.sol";

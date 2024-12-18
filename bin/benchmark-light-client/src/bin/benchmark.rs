@@ -10,7 +10,7 @@ use std::time::Instant;
 use test_data_utils::EXHAUSTIVE_TEST_HEADERS;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-pub const BTC_LIGHT_CLIENT_ELF: &[u8] = include_elf!("bitcoin-light-client-program");
+pub const RIFT_PROGRAM_ELF: &[u8] = include_elf!("rift-program");
 
 fn create_genesis_mmr() -> CompactMerkleMountainRange<Keccak256Hasher> {
     let genesis_leaf = get_genesis_leaf();
@@ -57,12 +57,18 @@ fn prove_chain_transition(chain_transition: ChainTransition) -> u64 {
     // Setup the prover client.
     let client = ProverClient::new();
 
+    let program_input = rift_core::giga::RiftProgramInput::builder()
+        .proof_type(rift_core::giga::ProofType::LightClient)
+        .light_client_input(chain_transition)
+        .build()
+        .unwrap();
+
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
-    stdin.write(&chain_transition);
+    stdin.write(&program_input);
 
     // Execute the program
-    let (output, report) = client.execute(BTC_LIGHT_CLIENT_ELF, stdin).run().unwrap();
+    let (output, report) = client.execute(RIFT_PROGRAM_ELF, stdin).run().unwrap();
 
     // Record the number of cycles executed.
     report.total_instruction_count()

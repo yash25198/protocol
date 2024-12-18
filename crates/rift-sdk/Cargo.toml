@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rift-core = { workspace = true }
 alloy = {workspace = true }
 thiserror = { workspace = true }
 bitcoin = { workspace = true }

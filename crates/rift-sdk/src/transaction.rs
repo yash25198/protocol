@@ -14,12 +14,7 @@ use bitcoin::{
     ScriptBuf, Sequence, TxOut, Txid,
 };
 
-/*
-
 use crypto_bigint::{NonZero, U256};
-use rift_core::btc_light_client::AsLittleEndianBytes;
-use rift_core::btc_light_client::Block as RiftOptimizedBlock;
-use rift_core::lp::LiquidityReservation;
 use std::str::FromStr;
 
 pub struct P2WPKHBitcoinWallet {
@@ -64,32 +59,6 @@ impl P2WPKHBitcoinWallet {
     }
 }
 
-pub fn get_chainworks(blocks: &[RiftOptimizedBlock], initial_chainwork: U256) -> Vec<U256> {
-    vec![initial_chainwork]
-        .into_iter()
-        .chain(blocks.split_first().unwrap().1.iter().scan(
-            initial_chainwork,
-            |chainwork_acc, block| {
-                *chainwork_acc = block.compute_chainwork(*chainwork_acc);
-                Some(*chainwork_acc)
-            },
-        ))
-        .collect()
-}
-
-pub fn wei_to_satoshi(wei_amount: U256, wei_sats_exchange_rate: u64) -> u64 {
-    let rate =
-        NonZero::new(U256::from_u64(wei_sats_exchange_rate)).expect("Exchange rate cannot be zero");
-
-    let result = wei_amount.checked_div(&rate).expect("Division overflow");
-
-    if result > U256::from_u64(u64::MAX) {
-        panic!("Result exceeds u64 capacity");
-    }
-
-    result.as_limbs()[0].into()
-}
-
 pub fn serialize_no_segwit(tx: &Transaction) -> Vec<u8> {
     let mut buffer = Vec::new();
     tx.version
@@ -106,6 +75,7 @@ pub fn serialize_no_segwit(tx: &Transaction) -> Vec<u8> {
         .expect("Encoding lock_time failed");
     buffer
 }
+/*
 
 pub fn build_rift_payment_transaction(
     order_nonce: [u8; 32],

@@ -6,7 +6,7 @@ use std::fmt;
 use crate::hasher::Hasher;
 use crate::light_client::Header;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default)]
 pub struct BlockLeaf {
     pub height: u32,
     pub block_hash: [u8; 32],           // Stored in reverse byte order
