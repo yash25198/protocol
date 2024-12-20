@@ -11,4 +11,4 @@ rm -rf artifacts/*
 
 # Copy compiled artifacts
 cp out/RiftExchange.sol/RiftExchange.json artifacts/
-cp out/MockUSDT.sol/MockUSDT.json artifacts/
+cp out/MockUSDC.sol/MockUSDC.json artifacts/

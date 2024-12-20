@@ -26,13 +26,10 @@ include_push_bytes = true
 [profile.default]
 remappings = [
     "forge-std/=dependencies/forge-std-1.9.3/src/",
-    "@openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.0.2/",
-    "@openzeppelin-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.0.2/",
-    "@openzeppelin-foundry-upgrades/=dependencies/openzeppelin-foundry-upgrades-0.3.6/src/",
     "openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.0.2/",
     "openzeppelin-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.0.2/",
     "openzeppelin-foundry-upgrades/=dependencies/openzeppelin-foundry-upgrades-0.3.6/src/",
-    "@sp1-contracts/=dependencies/sp1-contracts-2.0.0/contracts/src/",
+    "sp1-contracts/=dependencies/sp1-contracts-3.0.0/contracts/src/",
     "solmate/=dependencies/solmate-6.7.0/src/",
     "solady/=dependencies/solady-0.0.259/src/"
 ]
@@ -104,9 +101,7 @@ arbitrum = { key = "${ARBITRUM_SEPOLIA_ETHERSCAN_API_KEY}" }
 [dependencies]
 "forge-std" = "1.9.3"
 "@openzeppelin-contracts" = "5.0.2"
-"@openzeppelin-contracts-upgradeable" = "5.0.2"
-"openzeppelin-foundry-upgrades" = "0.3.6"
-"sp1-contracts" = { version = "2.0.0", url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v2.0.0.zip" }
+"sp1-contracts" = { version = "3.0.0", url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v3.0.0.zip" }
 solmate = "6.7.0"
 solady = "0.0.259"
 

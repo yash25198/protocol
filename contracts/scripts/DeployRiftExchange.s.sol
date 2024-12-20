@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "../src/RiftExchange.sol";
-import {Upgrades} from "@openzeppelin-foundry-upgrades/Upgrades.sol";
 
 contract DeployRiftExchange is Script {
     function stringToUint(string memory s) internal pure returns (uint256) {

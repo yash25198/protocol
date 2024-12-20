@@ -16,10 +16,13 @@ library Errors {
     error SwapDoesNotExist();
     error EmptyDepositVault();
     error DepositStillLocked();
-    error InvalidBlockInclusionProof();
+    error InvalidSwapBlockInclusionProof();
+    error InvalidConfirmationBlockInclusionProof();
     error CannotOverwriteOnGoingSwap();
     error NoFeeToPay();
     error InvalidVaultCommitment();
     error StillInChallengePeriod();
     error SwapNotProved();
+    error InvalidConfirmationBlocks();
+    error InvalidConfirmationBlockDelta();
 }

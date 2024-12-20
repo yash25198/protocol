@@ -2,18 +2,19 @@
 pragma solidity ^0.8.4;
 
 import {Test} from "forge-std/Test.sol";
-import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {SP1MockVerifier} from "@sp1-contracts/SP1MockVerifier.sol";
+import {IERC20} from "openzeppelin/contracts/interfaces/IERC20.sol";
+import {ERC1967Proxy} from "openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {SP1MockVerifier} from "sp1-contracts/SP1MockVerifier.sol";
 import {Vm} from "forge-std/Vm.sol";
 import "forge-std/console.sol";
 
 import {MarketLib} from "../../src/libraries/MarketLib.sol";
 import {CommitmentVerificationLib} from "../../src/libraries/CommitmentVerificationLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
+import {Events} from "../../src/libraries/Events.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
-import {MockUSDT} from "./MockUSDT.sol";
+import {MockUSDC} from "./MockUSDC.sol";
 
 /// @author Modified from Solady (https://github.com/Vectorized/solady/blob/main/test/utils/TestPlus.sol)
 contract PRNG {
@@ -453,16 +454,12 @@ contract PRNG {
 
 contract RiftTest is Test, PRNG {
     address exchangeOwner = address(0xbeef);
-    bytes32 VAULT_UPDATED_TOPIC =
-        keccak256("VaultUpdated((uint256,uint64,uint256,uint256,uint64,bytes22,address,address,bytes32))");
-    bytes32 SWAP_UPDATED_TOPIC =
-        keccak256("SwapUpdated((uint256,bytes32,(bytes32,uint64,uint256),uint64,address,uint256,uint256,uint8))");
     RiftExchange public exchange;
-    MockUSDT public mockUSDT;
+    MockUSDC public mockUSDC;
     SP1MockVerifier public verifier;
 
     function setUp() public {
-        mockUSDT = new MockUSDT();
+        mockUSDC = new MockUSDC();
         verifier = new SP1MockVerifier();
 
         bytes32 mmrRoot = keccak256(abi.encodePacked("mmr root"));
@@ -473,16 +470,15 @@ contract RiftTest is Test, PRNG {
         });
 
         exchange = new RiftExchange({
-            _initialOwner: exchangeOwner,
             _mmrRoot: mmrRoot,
             _initialCheckpointLeaf: initialCheckpointLeaf,
-            _depositToken: address(mockUSDT),
+            _depositToken: address(mockUSDC),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifierContract: address(verifier),
             _feeRouterAddress: address(0xfee)
         });
 
-        mockUSDT = MockUSDT(address(exchange.DEPOSIT_TOKEN()));
+        mockUSDC = MockUSDC(address(exchange.DEPOSIT_TOKEN()));
     }
 
     function _callFFI(string memory cmd) internal returns (bytes memory) {
@@ -497,18 +493,36 @@ contract RiftTest is Test, PRNG {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
     }
 
-    function _extractVaultFromLogs(Vm.Log[] memory logs) internal view returns (Types.DepositVault memory) {
+    function _totalSwapOutputFromVaults(Types.DepositVault[] memory vaults) internal pure returns (uint256) {
+        uint256 totalSwapOutput = 0;
+        uint256 takerFee = 0;
+        for (uint256 i = 0; i < vaults.length; i++) {
+            totalSwapOutput += vaults[i].depositAmount;
+            takerFee += vaults[i].depositFee;
+        }
+        return totalSwapOutput - takerFee;
+    }
+
+    function _totalSwapFeeFromVaults(Types.DepositVault[] memory vaults) internal pure returns (uint256) {
+        uint256 totalSwapFee = 0;
+        for (uint256 i = 0; i < vaults.length; i++) {
+            totalSwapFee += vaults[i].depositFee * 2;
+        }
+        return totalSwapFee;
+    }
+
+    function _extractVaultFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DepositVault memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == VAULT_UPDATED_TOPIC) {
+            if (logs[i].topics[0] == Events.VaultUpdated.selector) {
                 return abi.decode(logs[i].data, (Types.DepositVault));
             }
         }
         revert("Vault not found");
     }
 
-    function _extractSwapFromLogs(Vm.Log[] memory logs) internal view returns (Types.ProposedSwap memory) {
+    function _extractSwapFromLogs(Vm.Log[] memory logs) internal pure returns (Types.ProposedSwap memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == SWAP_UPDATED_TOPIC) {
+            if (logs[i].topics[0] == Events.SwapUpdated.selector) {
                 return abi.decode(logs[i].data, (Types.ProposedSwap));
             }
         }
@@ -517,11 +531,12 @@ contract RiftTest is Test, PRNG {
 
     function _depositLiquidityWithAssertions(
         uint256 depositAmount,
-        uint64 expectedSats
+        uint64 expectedSats,
+        uint8 confirmationBlocks
     ) internal returns (Types.DepositVault memory) {
         // [1] mint and approve deposit token
-        mockUSDT.mint(address(this), depositAmount);
-        mockUSDT.approve(address(exchange), depositAmount);
+        mockUSDC.mint(address(this), depositAmount);
+        mockUSDC.approve(address(exchange), depositAmount);
 
         // [2] generate a scriptPubKey starting with a valid P2WPKH prefix (0x0014)
         bytes22 btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
@@ -535,7 +550,8 @@ contract RiftTest is Test, PRNG {
             initialDepositAmount: depositAmount,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
-            depositSalt: depositSalt
+            depositSalt: depositSalt,
+            confirmationBlocks: confirmationBlocks
         });
 
         // [4] grab the logs, find the vault
@@ -551,7 +567,7 @@ contract RiftTest is Test, PRNG {
         assertEq(createdVault.vaultIndex, vaultIndex, "Vault index should match");
 
         // [7] verify caller has no balance left
-        assertEq(mockUSDT.balanceOf(address(this)), 0, "Caller should have no balance left");
+        assertEq(mockUSDC.balanceOf(address(this)), 0, "Caller should have no balance left");
 
         // [8] verify owner address
         assertEq(createdVault.ownerAddress, address(this), "Owner address should match");
