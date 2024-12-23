@@ -7,8 +7,6 @@ library MarketLib {
     /// @param amount The amount being deposited/swapped
     /// @return protocolFee The calculated protocol fee, either 0.1% or MIN_PROTOCOL_FEE, whichever is larger
     function calculateFeeFromInitialDeposit(uint256 amount) internal pure returns (uint256 protocolFee) {
-        // [0] return $0.1 or 0.1% of swap value, whatever is larger
         protocolFee = (amount * Constants.PROTOCOL_FEE_BP) / 10e3; // bpScale value
-        if (protocolFee < Constants.MIN_PROTOCOL_FEE) protocolFee = Constants.MIN_PROTOCOL_FEE;
     }
 }
