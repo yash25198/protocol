@@ -39,8 +39,8 @@ use eyre::{eyre, Result};
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
-    MockUSDT,
-    "../hypernode/artifacts/MockUSDT.json"
+    MockUSDC,
+    "../hypernode/artifacts/MockUSDC.json"
 );
 
 pub type EvmWebsocketProvider = Arc<
@@ -61,11 +61,11 @@ pub type EvmWebsocketProvider = Arc<
 pub type RiftExchangeWebsocket =
     RiftExchange::RiftExchangeInstance<PubSubFrontend, EvmWebsocketProvider>;
 
-pub type MockUSDTWebsocket = MockUSDT::MockUSDTInstance<PubSubFrontend, EvmWebsocketProvider>;
+pub type MockUSDCWebsocket = MockUSDC::MockUSDCInstance<PubSubFrontend, EvmWebsocketProvider>;
 
 pub struct RiftDevnet {
     pub anvil_instance: AnvilInstance,
-    pub usdt_contract: Arc<MockUSDTWebsocket>,
+    pub USDC_contract: Arc<MockUSDCWebsocket>,
     pub rift_exchange_contract: Arc<RiftExchangeWebsocket>,
 }
 
@@ -80,7 +80,7 @@ impl RiftDevnet {
             hex!("000000000000000000000000000000000000000000000000000000000000beef");
 
         // now setup contracts
-        let (rift_exchange, usdt_contract) =
+        let (rift_exchange, USDC_contract) =
             deploy_contracts(&anvil, sp1_circuit_verification_hash).await?;
 
         let provider = rift_exchange.provider().clone();
@@ -94,27 +94,27 @@ impl RiftDevnet {
         println!("Anvil HTTP Url:        {}", anvil.endpoint());
         println!("Anvil WS Url:          {}", anvil.ws_endpoint());
         println!("Anvil Chain ID:        {}", anvil.chain_id());
-        println!("USDT Address:          {}", usdt_contract.address());
+        println!("USDC Address:          {}", USDC_contract.address());
         println!("Rift Exchange Address: {}", rift_exchange.address());
         println!("---RIFT DEVNET---");
 
         if let Some(addresses) = addresses {
             for address in addresses {
-                // mint some USDT and ETHER to each address
+                // mint some USDC and ETHER to each address
                 let address = Address::from_str(&address)?;
 
                 provider
                     .anvil_set_balance(address, U256::from_str("100000000000000000000")?) // 100 eth
                     .await?;
 
-                usdt_contract
+                USDC_contract
                     .mint(address, U256::from_str("1000000000000")?) // 1 mill
                     .send()
                     .await?
                     .get_receipt()
                     .await?;
 
-                println!("Minted 1 million USDT to {}...", address);
+                println!("Minted 1 million USDC to {}...", address);
                 println!("Minted 100 ETH to {}...", address);
             }
         }
@@ -122,7 +122,7 @@ impl RiftDevnet {
         Ok(RiftDevnet {
             anvil_instance: anvil,
             rift_exchange_contract: rift_exchange,
-            usdt_contract,
+            USDC_contract,
         })
     }
 }
@@ -130,7 +130,7 @@ impl RiftDevnet {
 async fn deploy_contracts(
     anvil: &AnvilInstance,
     circuit_verification_key_hash: [u8; 32],
-) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockUSDTWebsocket>)> {
+) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockUSDCWebsocket>)> {
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     info!("Exchange owner address: {}", signer.address());
     let wallet = EthereumWallet::from(signer.clone());
@@ -152,9 +152,9 @@ async fn deploy_contracts(
         )
         .await?;
 
-    let usdt_contract = MockUSDT::deploy(provider.clone()).await?;
+    let USDC_contract = MockUSDC::deploy(provider.clone()).await?;
 
-    info!("USDT address: {}", usdt_contract.address());
+    info!("USDC address: {}", USDC_contract.address());
     /*
        address _initialOwner,
        bytes32 _mmrRoot,
@@ -178,14 +178,14 @@ async fn deploy_contracts(
         wallet.default_signer().address(),
         get_genesis_leaf().hash::<Keccak256Hasher>().into(),
         block_leaf,
-        *usdt_contract.address(),
+        *USDC_contract.address(),
         circuit_verification_key_hash.into(),
         verifier_contract,
         wallet.default_signer().address(),
     )
     .await?;
 
-    Ok((Arc::new(contract), Arc::new(usdt_contract)))
+    Ok((Arc::new(contract), Arc::new(USDC_contract)))
 }
 
 async fn spawn_anvil() -> Result<AnvilInstance> {
