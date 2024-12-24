@@ -21,17 +21,17 @@ exclude = [".github/"]
 
 [workspace.dependencies]
 # Internal dependencies
-bitcoin-light-client-core = { path = "./crates/bitcoin-light-client-core" }
-rift-core = { path = "./crates/rift-core" }
-rift-sdk = { path = "./crates/rift-sdk" }
-rift-program = {path = "./crates/rift-program"}
-
-test-data-utils = { path = "./test-data" }
+bitcoin-light-client-core = { path = "crates/bitcoin-light-client-core" }
+rift-core = { path = "crates/rift-core" }
+rift-sdk = { path = "crates/rift-sdk" }
+rift-program = {path = "crates/rift-program"}
+test-data-utils = { path = "test-data" }
 
 # SP1 dependencies
-sp1-helper = "3.0.0"
-sp1-sdk = "3.0.0"
-sp1-zkvm = "3.0.0"
+sp1-helper = "3.4.0"
+sp1-sdk = { version = "3.4.0", features = ["cuda"]}
+sp1-cuda = "3.4.0"
+sp1-zkvm = "3.4.0"
 
 # External dependencies
 bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"}
