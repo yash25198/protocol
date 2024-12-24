@@ -4,6 +4,7 @@ use bitcoin_light_client_core::leaves::get_genesis_leaf;
 use bitcoin_light_client_core::light_client::Header;
 use bitcoin_light_client_core::mmr::{CompactMerkleMountainRange, MMRProof};
 use bitcoin_light_client_core::{BlockPosition, ChainTransition};
+use clap::Parser;
 use prettytable::{row, Table};
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 use std::time::Instant;
@@ -47,15 +48,38 @@ fn create_chain_transition_from_genesis(num_blocks: usize) -> ChainTransition {
         disposed_leaf_hashes: vec![],
         new_headers: EXHAUSTIVE_TEST_HEADERS[1..num_blocks + 1]
             .iter()
-            .map(|(_, header)| Header(header.clone()))
+            .map(|(_, header)| Header(*header))
             .collect(),
     };
     chain_transition
 }
 
-fn prove_chain_transition(chain_transition: ChainTransition) -> u64 {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchmarkType {
+    Execute,
+    Prove,
+}
+
+#[derive(Debug)]
+struct BenchmarkResult {
+    cycles: Option<u64>,
+    duration: std::time::Duration,
+}
+
+fn prove_chain_transition(
+    chain_transition: ChainTransition,
+    benchmark_type: BenchmarkType,
+) -> BenchmarkResult {
     // Setup the prover client.
+    println!("Creating prover client...");
+    // set the SP1_PROVER env to network
+    std::env::set_var("SP1_PROVER", "local");
     let client = ProverClient::new();
+    println!("Prover client created.");
+
+    println!("Setting up program...");
+    let (pk, _vk) = client.setup(RIFT_PROGRAM_ELF);
+    println!("Program setup complete.");
 
     let program_input = rift_core::giga::RiftProgramInput::builder()
         .proof_type(rift_core::giga::ProofType::LightClient)
@@ -68,32 +92,89 @@ fn prove_chain_transition(chain_transition: ChainTransition) -> u64 {
     stdin.write(&program_input);
 
     // Execute the program
-    let (output, report) = client.execute(RIFT_PROGRAM_ELF, stdin).run().unwrap();
+    let result = match benchmark_type {
+        BenchmarkType::Execute => {
+            let start = Instant::now();
+            let (_output, report) = client.execute(RIFT_PROGRAM_ELF, stdin).run().unwrap();
+            let duration = start.elapsed();
+            let cycles = report.total_instruction_count();
+            BenchmarkResult {
+                cycles: Some(cycles),
+                duration,
+            }
+        }
+        BenchmarkType::Prove => {
+            let start = Instant::now();
+            client.prove(&pk, stdin).groth16().run().unwrap();
+            let duration = start.elapsed();
+            BenchmarkResult {
+                cycles: None,
+                duration,
+            }
+        }
+    };
 
-    // Record the number of cycles executed.
-    report.total_instruction_count()
+    result
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The type of benchmark to run: "execute" or "prove"
+    #[arg(short, long, default_value = "execute")]
+    r#type: String,
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    if duration.as_secs() == 0 {
+        return format!("{} ms", duration.as_millis());
+    }
+    if duration.as_secs() < 60 {
+        return format!("{:.2} s", duration.as_secs_f64());
+    }
+    if duration.as_secs() < 3600 {
+        return format!("{:.2} min", duration.as_secs_f64() / 60.0);
+    }
+    format!("{:.2} h", duration.as_secs_f64() / 3600.0)
 }
 
 fn main() {
     // Setup the logger.
     sp1_sdk::utils::setup_logger();
 
+    // Parse command line arguments
+    let args = Args::parse();
+    let benchmark_type = match args.r#type.to_lowercase().as_str() {
+        "execute" => BenchmarkType::Execute,
+        "prove" => BenchmarkType::Prove,
+        _ => panic!("Invalid benchmark type. Must be either 'execute' or 'prove'"),
+    };
+
     // Create a table for pretty printing.
     let mut table = Table::new();
-    table.add_row(row!["Num Blocks", "Cycle Count", "Time to Execute (ms)"]);
+    if benchmark_type == BenchmarkType::Execute {
+        table.add_row(row!["Num Blocks", "Cycle Count"]);
+    } else {
+        table.add_row(row!["Num Blocks", "Time to Prove"]);
+    }
+
+    // explicitly load data
+    create_chain_transition_from_genesis(1);
 
     // Prove at log intervals: 1, 10, 100, 1000, 10000, 100000
-    [1, 10, 100, 1000, 10000, 100000]
-        .iter()
-        .for_each(|&num_blocks| {
-            println!("Starting benchmark for {} blocks...", num_blocks);
-            let start_time = Instant::now();
-            let chain_transition = create_chain_transition_from_genesis(num_blocks);
-            let cycles = prove_chain_transition(chain_transition);
-            let duration = start_time.elapsed().as_millis();
-            table.add_row(row![num_blocks, cycles, duration]);
-            println!("Completed benchmark for {} blocks.", num_blocks);
-        });
+    [1, 10, 100, 1000, 10000].iter().for_each(|&num_blocks| {
+        println!("Starting benchmark for {} blocks...", num_blocks);
+        let chain_transition = create_chain_transition_from_genesis(num_blocks);
+        println!("Chain transition created.");
+        let benchmark_result = prove_chain_transition(chain_transition, benchmark_type);
+        println!("Benchmark result: {:?}", benchmark_result);
+        if benchmark_result.cycles.is_some() {
+            table.add_row(row![num_blocks, benchmark_result.cycles.unwrap(),]);
+        } else {
+            table.add_row(row![num_blocks, format_duration(benchmark_result.duration)]);
+        }
+        println!("Completed benchmark for {} blocks.", num_blocks);
+    });
 
     // Print the table at the end.
     table.printstd();
