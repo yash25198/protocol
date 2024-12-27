@@ -14,7 +14,7 @@ import {Types} from "../../src/libraries/Types.sol";
 import {Events} from "../../src/libraries/Events.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
-import {MockUSDC} from "./MockUSDC.sol";
+import {MockToken} from "./MockToken.sol";
 
 /// @author Modified from Solady (https://github.com/Vectorized/solady/blob/main/test/utils/TestPlus.sol)
 contract PRNG {
@@ -455,11 +455,11 @@ contract PRNG {
 contract RiftTest is Test, PRNG {
     address exchangeOwner = address(0xbeef);
     RiftExchange public exchange;
-    MockUSDC public mockUSDC;
+    MockToken public mockToken;
     SP1MockVerifier public verifier;
 
     function setUp() public {
-        mockUSDC = new MockUSDC();
+        mockToken = new MockToken("Mock Token", "MTK", 6);
         verifier = new SP1MockVerifier();
 
         bytes32 mmrRoot = keccak256(abi.encodePacked("mmr root"));
@@ -472,13 +472,13 @@ contract RiftTest is Test, PRNG {
         exchange = new RiftExchange({
             _mmrRoot: mmrRoot,
             _initialCheckpointLeaf: initialCheckpointLeaf,
-            _depositToken: address(mockUSDC),
+            _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifierContract: address(verifier),
             _feeRouterAddress: address(0xfee)
         });
 
-        mockUSDC = MockUSDC(address(exchange.DEPOSIT_TOKEN()));
+        mockToken = MockToken(address(exchange.DEPOSIT_TOKEN()));
     }
 
     function _callFFI(string memory cmd) internal returns (bytes memory) {
@@ -535,8 +535,8 @@ contract RiftTest is Test, PRNG {
         uint8 confirmationBlocks
     ) internal returns (Types.DepositVault memory) {
         // [1] mint and approve deposit token
-        mockUSDC.mint(address(this), depositAmount);
-        mockUSDC.approve(address(exchange), depositAmount);
+        mockToken.mint(address(this), depositAmount);
+        mockToken.approve(address(exchange), depositAmount);
 
         // [2] generate a scriptPubKey starting with a valid P2WPKH prefix (0x0014)
         bytes22 btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
@@ -567,7 +567,7 @@ contract RiftTest is Test, PRNG {
         assertEq(createdVault.vaultIndex, vaultIndex, "Vault index should match");
 
         // [7] verify caller has no balance left
-        assertEq(mockUSDC.balanceOf(address(this)), 0, "Caller should have no balance left");
+        assertEq(mockToken.balanceOf(address(this)), 0, "Caller should have no balance left");
 
         // [8] verify owner address
         assertEq(createdVault.ownerAddress, address(this), "Owner address should match");

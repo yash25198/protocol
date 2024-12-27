@@ -127,11 +127,11 @@ contract RiftExchangeUnitTest is RiftTest {
         Types.DepositVault memory emptyVault = _extractVaultFromLogs(vm.getRecordedLogs());
 
         // [3] burn the USDC withdrawn from the vault
-        mockUSDC.transfer(address(0), mockUSDC.balanceOf(address(this)));
+        mockToken.transfer(address(0), mockToken.balanceOf(address(this)));
 
         // [4] prepare for overwrite deposit
-        mockUSDC.mint(address(this), initialDepositAmount);
-        mockUSDC.approve(address(exchange), initialDepositAmount);
+        mockToken.mint(address(this), initialDepositAmount);
+        mockToken.approve(address(exchange), initialDepositAmount);
 
         // [5] perform overwrite deposit
         vm.recordLogs();
@@ -157,7 +157,7 @@ contract RiftExchangeUnitTest is RiftTest {
         assertEq(overwrittenVault.vaultIndex, emptyVault.vaultIndex, "Vault index should match original");
 
         // [9] verify caller has no balance left
-        assertEq(mockUSDC.balanceOf(address(this)), 0, "Caller should have no balance left");
+        assertEq(mockToken.balanceOf(address(this)), 0, "Caller should have no balance left");
 
         // [10] verify owner address
         assertEq(overwrittenVault.ownerAddress, address(this), "Owner address should match");
@@ -182,7 +182,7 @@ contract RiftExchangeUnitTest is RiftTest {
             expectedSats,
             confirmationBlocks
         );
-        uint256 initialBalance = mockUSDC.balanceOf(address(this));
+        uint256 initialBalance = mockToken.balanceOf(address(this));
         uint256 expectedWithdrawAmount = vault.depositAmount;
 
         // [2] warp to future time after lockup period
@@ -204,7 +204,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [6] verify tokens were transferred correctly
         assertEq(
-            mockUSDC.balanceOf(address(this)),
+            mockToken.balanceOf(address(this)),
             initialBalance + expectedWithdrawAmount,
             "Incorrect withdrawal amount"
         );
@@ -379,7 +379,7 @@ contract RiftExchangeUnitTest is RiftTest {
         vm.warp(block.timestamp + Constants.CHALLENGE_PERIOD);
 
         // [6] record initial balances
-        uint256 initialBalance = mockUSDC.balanceOf(address(this));
+        uint256 initialBalance = mockToken.balanceOf(address(this));
         uint256 initialFeeBalance = exchange.accumulatedFeeBalance();
 
         // [7] release liquidity using our valid merkle proof
@@ -401,7 +401,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [9] verify funds were transferred correctly
         assertEq(
-            mockUSDC.balanceOf(address(this)),
+            mockToken.balanceOf(address(this)),
             initialBalance + totalSwapOutput,
             "Incorrect amount transferred to recipient"
         );
@@ -424,7 +424,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [11] verify that if we send the fees to the fee router, the fee router has the correct balance
         uint256 accountedFeeRouterBalancePrePayout = exchange.accumulatedFeeBalance();
-        uint256 feeRouterBalancePrePayout = mockUSDC.balanceOf(address(exchange));
+        uint256 feeRouterBalancePrePayout = mockToken.balanceOf(address(exchange));
         assertEq(
             accountedFeeRouterBalancePrePayout,
             feeRouterBalancePrePayout,
@@ -442,7 +442,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         exchange.payoutToFeeRouter();
         assertEq(
-            mockUSDC.balanceOf(exchange.FEE_ROUTER_ADDRESS()),
+            mockToken.balanceOf(exchange.FEE_ROUTER_ADDRESS()),
             feeRouterBalancePrePayout,
             "Fee router should have received all fees"
         );
