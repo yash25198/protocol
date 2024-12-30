@@ -5,7 +5,8 @@ Stores the first 800k bitcoin block headers in git-lfs
 ## Requirements
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-## Run Header Downloader
+## Run 
+Downloads headers, blocks, as well as some bitcoin cash headers (to test fork choice)
 ```
-uv run download_blocks.py
+uv run get_bitcoin_data.py
 ```
