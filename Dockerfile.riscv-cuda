@@ -6,8 +6,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     RUST_VERSION=1.81.0 \
     RISCV_TOOLCHAIN_DIR=/opt/riscv
 
-# Update system and install Ubuntu dependencies
+# Add the LLVM repository and key
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    gnupg && \
+    wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
+    echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" >> /etc/apt/sources.list.d/llvm.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     automake \
     autotools-dev \
@@ -33,9 +38,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     libglib2.0-dev \
     libslirp-dev \
-    clang-15 \
-    llvm-15 \
+    clang-18 \
+    llvm-18 \
     && rm -rf /var/lib/apt/lists/*
+
+# Set default version of clang++ and llvm to 18
+RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100 && \
+    update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-18 100
 
 # Install Rust
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain ${RUST_VERSION}
@@ -53,5 +63,5 @@ RUN git clone https://github.com/riscv-collab/riscv-gnu-toolchain && \
 # Set up environment for RISC-V toolchain
 ENV PATH="${RISCV_TOOLCHAIN_DIR}/bin:${PATH}"
 
-# Default command
-RUN |1 TARGETARCH=amd64 /bin/sh -c apt-get update && apt-get install -y --no-install-recommends     ${NV_CUDNN_PACKAGE}     ${NV_CUDNN_PACKAGE_DEV}     && apt-mark hold ${NV_CUDNN_PACKAGE_NAME}     && rm -rf /var/lib/apt/lists/* # buildkit
+CMD ["/bin/bash"]
+
