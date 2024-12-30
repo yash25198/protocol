@@ -309,7 +309,7 @@ async def main():
     blocks_per_second = 2
 
     bitcoin_cash_post_fork_blocks = 100_000
-    bitcoin_cash_headers_per_second = 5
+    bitcoin_cash_headers_per_second = 50
 
     # Download Bitcoin canonical headers
     await download_bitcoin_canon_headers(bitcoin_rpc, end_header_height, headers_per_second)
