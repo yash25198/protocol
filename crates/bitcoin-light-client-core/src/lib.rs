@@ -174,7 +174,7 @@ fn validate_reorg_conditions(
     }
 }
 
-fn validate_chainwork(
+pub fn validate_chainwork(
     parent_leaf: &BlockLeaf,
     previous_tip_leaf: &BlockLeaf,
     new_headers: &[Header],
@@ -329,24 +329,26 @@ pub fn commit_new_chain<H: Hasher>(ctx: ChainTransition) -> BitcoinLightClientPu
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
-    use accumulators::mmr::MMR as ClientMMR;
+    use accumulators::mmr::{
+        leaf_count_to_mmr_size, map_leaf_index_to_element_index, mmr_size_to_leaf_count,
+        MMR as ClientMMR,
+    };
+    use bitcoin_core_rs::get_retarget_height;
     use hasher::Keccak256Hasher;
     use leaves::get_genesis_leaf;
     use mmr::tests::{
         client_mmr_proof_to_minimal_mmr_proof, create_keccak256_client_mmr, digest_to_hex,
     };
     use mmr::CompactMerkleMountainRange;
-    use test_data_utils::TEST_HEADERS;
+    use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS, TEST_HEADERS};
 
     #[test]
     fn validate_headers_available() {
         assert!(!TEST_HEADERS.is_empty(), "Headers should be loaded");
     }
-
-    // TODO Tests:
-    //  - Test for reorgs using actual chain data by using downloading a bitcoin forks blocks which will have < chainwork
-    //  - Test for chain extension starting from  after block  33k (once difficulty started changing)
 
     // create a baby MMR from genesis (no other leaves)
     async fn create_from_genesis() -> (
@@ -378,6 +380,86 @@ mod tests {
             client_mmr,
             mmr,
         )
+    }
+
+    struct InitialMMR {
+        pub last_leaf_append_element_index: usize,
+        pub last_header: Header,
+        pub last_leaf: BlockLeaf,
+        pub last_header_retarget_height: usize,
+        pub last_header_retarget_header: Header,
+        pub last_header_retarget_leaf: BlockLeaf,
+        pub last_header_retarget_element_index: usize,
+        pub client_mmr: ClientMMR,
+        pub mmr: CompactMerkleMountainRange<Keccak256Hasher>,
+    }
+
+    async fn create_from_bch_fork() -> InitialMMR {
+        let genesis_leaf = get_genesis_leaf();
+        let genesis_leaf_hash = genesis_leaf.hash::<Keccak256Hasher>();
+
+        // create leaves for each header
+
+        let start = Instant::now();
+        let new_headers = EXHAUSTIVE_TEST_HEADERS[1..=478558]
+            .iter()
+            .map(|(_, header)| Header(*header))
+            .collect::<Vec<_>>();
+
+        let (new_chain_works, _) = validate_chainwork(&genesis_leaf, &genesis_leaf, &new_headers);
+
+        let new_leaves = create_new_leaves(&genesis_leaf, &new_headers, &new_chain_works);
+
+        let last_header_retarget_height =
+            get_retarget_height(new_leaves.last().unwrap().height) as usize;
+        println!(
+            "[info] Last header retarget height: {}",
+            last_header_retarget_height
+        );
+        let last_header_retarget_header = Header(new_headers[last_header_retarget_height - 1].0);
+        let last_header_retarget_leaf = new_leaves[last_header_retarget_height - 1];
+
+        // now append the leaves to the MMR
+        let mut client_mmr = create_keccak256_client_mmr();
+        let mut mmr = CompactMerkleMountainRange::<Keccak256Hasher>::new();
+
+        mmr.append(&genesis_leaf_hash);
+
+        let mut last_append_result = client_mmr
+            .append(digest_to_hex(&genesis_leaf_hash))
+            .await
+            .unwrap();
+
+        let mut last_header_retarget_element_index = 0;
+        for leaf in new_leaves.iter() {
+            let leaf_hash = leaf.hash::<Keccak256Hasher>();
+            mmr.append(&leaf_hash);
+            last_append_result = client_mmr.append(digest_to_hex(&leaf_hash)).await.unwrap();
+
+            if leaf.height as usize == last_header_retarget_height {
+                last_header_retarget_element_index = last_append_result.element_index;
+            }
+        }
+
+        assert!(last_header_retarget_element_index != 0);
+
+        println!(
+            "Time to append {} leaves: {:#?}",
+            new_leaves.len(),
+            start.elapsed()
+        );
+
+        InitialMMR {
+            last_leaf_append_element_index: last_append_result.element_index,
+            last_header: *new_headers.last().unwrap(),
+            last_leaf: *new_leaves.last().unwrap(),
+            last_header_retarget_height,
+            last_header_retarget_header,
+            last_header_retarget_leaf,
+            last_header_retarget_element_index,
+            client_mmr,
+            mmr,
+        }
     }
 
     #[tokio::test]
@@ -430,5 +512,148 @@ mod tests {
 
         println!("Public input: {:?}", public_input);
         // Verify the new MMR root and public inputs
+    }
+
+    // Create an MMR up to the bch fork block (block 478558), then commit to 10 BCH blocks, then dispose of the 10 BCH blocks, simultaneously commiting to 11 bitcoin blocks
+    // Then validate the new MMR root and public inputs
+    #[tokio::test]
+    async fn test_bch_chain_extension_then_overwrite() {
+        let genesis_leaf = get_genesis_leaf();
+        let genesis_leaf_hash = genesis_leaf.hash::<Keccak256Hasher>();
+
+        let mut client_mmr_state = create_from_bch_fork().await;
+
+        let pre_bch_mmr_root = client_mmr_state.mmr.get_root();
+        let pre_bch_mmr_bagged_peak = client_mmr_state.mmr.bag_peaks().unwrap();
+
+        let pre_bch_mmr_leaf_element_index = client_mmr_state.last_leaf_append_element_index;
+
+        let parent_leaf = client_mmr_state.last_leaf;
+        let parent_header = client_mmr_state.last_header;
+
+        let pre_bch_peaks = client_mmr_state.mmr.peaks.clone();
+
+        let mut client_mmr = client_mmr_state.client_mmr;
+        let mut circuit_mmr = client_mmr_state.mmr;
+
+        // 10 bch headers
+        let bch_headers = TEST_BCH_HEADERS[0..10]
+            .iter()
+            .map(|(_, header)| Header(*header))
+            .collect::<Vec<_>>();
+
+        let (bch_chain_works, _) = validate_chainwork(
+            &client_mmr_state.last_leaf,
+            &client_mmr_state.last_leaf,
+            &bch_headers,
+        );
+
+        let bch_leaves =
+            create_new_leaves(&client_mmr_state.last_leaf, &bch_headers, &bch_chain_works);
+
+        // add the BCH leaves to the MMR
+
+        let mut last_appended_element_index = client_mmr_state.last_leaf_append_element_index;
+        let mut last_appended_leaf = client_mmr_state.last_leaf;
+        let mut last_appended_header = client_mmr_state.last_header;
+        for (i, leaf) in bch_leaves.iter().enumerate() {
+            let append_result = client_mmr
+                .append(digest_to_hex(&leaf.hash::<Keccak256Hasher>()))
+                .await
+                .unwrap();
+            circuit_mmr.append(&leaf.hash::<Keccak256Hasher>());
+            last_appended_element_index = append_result.element_index;
+            last_appended_leaf = *leaf;
+            last_appended_header = bch_headers[i];
+        }
+
+        // now get proofs for parent leaf and previous tip leaf
+        let parent_leaf_proof = client_mmr
+            .get_proof(pre_bch_mmr_leaf_element_index, None)
+            .await
+            .unwrap();
+
+        let previous_tip_leaf_proof = client_mmr
+            .get_proof(last_appended_element_index, None)
+            .await
+            .unwrap();
+
+        let previous_tip_leaf = last_appended_leaf;
+        let previous_tip_header = last_appended_header;
+
+        let parent_retarget_height = get_retarget_height(parent_leaf.height) as usize;
+        println!("Parent retarget height: {}", parent_retarget_height);
+        println!(
+            "Last header retarget height: {}",
+            client_mmr_state.last_header_retarget_height
+        );
+        assert!(parent_retarget_height == client_mmr_state.last_header_retarget_height);
+
+        println!(
+            "[grabbed] Last header retarget element index: {}",
+            client_mmr_state.last_header_retarget_element_index
+        );
+
+        let parent_retarget_header = client_mmr_state.last_header_retarget_header;
+        let parent_retarget_leaf = client_mmr_state.last_header_retarget_leaf;
+
+        let parent_retarget_proof = client_mmr
+            .get_proof(client_mmr_state.last_header_retarget_element_index, None)
+            .await
+            .unwrap();
+
+        let parent_retarget_observed_leaf_hash = parent_retarget_proof.element_hash.clone();
+
+        println!(
+            "Parent retarget observed leaf hash: {}",
+            &parent_retarget_observed_leaf_hash
+        );
+
+        println!(
+            "Correct parent retarget leaf hash: {}",
+            digest_to_hex(&parent_retarget_leaf.hash::<Keccak256Hasher>())
+        );
+
+        assert!(
+            parent_retarget_observed_leaf_hash
+                == digest_to_hex(&parent_retarget_leaf.hash::<Keccak256Hasher>()),
+            "Parent retarget proof is not for the correct leaf"
+        );
+
+        let previous_mmr_root = circuit_mmr.get_root();
+        let previous_mmr_bagged_peak = circuit_mmr.bag_peaks().unwrap();
+
+        let btc_headers = EXHAUSTIVE_TEST_HEADERS[478559..478559 + 11]
+            .iter()
+            .map(|(_, header)| Header(*header))
+            .collect::<Vec<_>>();
+
+        let public_input = commit_new_chain::<Keccak256Hasher>(ChainTransition::new(
+            previous_mmr_root,
+            previous_mmr_bagged_peak,
+            BlockPosition {
+                header: parent_header,
+                leaf: parent_leaf,
+                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(&parent_leaf_proof),
+            },
+            BlockPosition {
+                header: parent_retarget_header,
+                leaf: parent_retarget_leaf,
+                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(&parent_retarget_proof),
+            },
+            BlockPosition {
+                header: previous_tip_header,
+                leaf: previous_tip_leaf,
+                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(&previous_tip_leaf_proof),
+            },
+            pre_bch_peaks,
+            bch_leaves
+                .iter()
+                .map(|l| l.hash::<Keccak256Hasher>())
+                .collect(),
+            btc_headers,
+        ));
+
+        println!("Public input: {:?}", public_input);
     }
 }
