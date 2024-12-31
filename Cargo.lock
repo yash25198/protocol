@@ -1574,6 +1574,7 @@ version = "0.1.0"
 dependencies = [
  "accumulators",
  "alloy-sol-types 0.8.15",
+ "bitcoin-core-rs",
  "bitcoin-light-client-core",
  "clap",
  "hex",
@@ -1587,6 +1588,7 @@ dependencies = [
  "sp1-helper",
  "sp1-sdk",
  "test-data-utils",
+ "tokio",
  "tracing",
 ]
 
