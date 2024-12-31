@@ -9,6 +9,8 @@ pub static TEST_HEADERS: Lazy<Vec<(u32, [u8; 80])>> = Lazy::new(|| load_test_hea
 pub static EXHAUSTIVE_TEST_HEADERS: Lazy<Vec<(u32, [u8; 80])>> =
     Lazy::new(|| load_test_headers(true));
 
+pub static TEST_BCH_HEADERS: Lazy<Vec<(u32, [u8; 80])>> = Lazy::new(load_test_bch_headers);
+
 pub static TEST_BLOCKS: Lazy<Vec<Block>> = Lazy::new(load_test_blocks);
 
 fn load_test_blocks() -> Vec<Block> {
@@ -64,5 +66,22 @@ fn load_test_headers(exhaustive: bool) -> Vec<(u32, [u8; 80])> {
     }
     headers.sort_by_key(|(height, _)| *height);
     println!("Time to load headers: {:?}", start.elapsed());
+    headers
+}
+
+fn load_test_bch_headers() -> Vec<(u32, [u8; 80])> {
+    const INITIAL_BLOCK_HEADERS_STR: &str = include_str!("../data/bch_headers_478559_578559.json");
+    let mut json: Value =
+        serde_json::from_str(INITIAL_BLOCK_HEADERS_STR).expect("Failed to parse JSON");
+    let obj: &mut serde_json::Map<String, Value> =
+        json.as_object_mut().expect("JSON must be an object");
+    let mut headers = Vec::with_capacity(obj.len());
+    for (height_str, header_hex) in obj {
+        let height = height_str.parse::<u32>().expect("Invalid height value");
+        if let Value::String(hex_str) = header_hex {
+            let bytes = hex::decode(hex_str).expect("Invalid hex string");
+            headers.push((height, bytes.try_into().expect("Invalid header length")));
+        }
+    }
     headers
 }
