@@ -15,6 +15,7 @@ rift-program = { workspace = true }
 rift-core = { workspace = true }
 test-data-utils = { workspace = true }
 
+
 tokio = { workspace = true }
 sp1-sdk = { workspace = true }
 sp1-cuda = { workspace = true }
