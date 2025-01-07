@@ -422,6 +422,7 @@ contract RiftExchange is BitcoinLightClient {
             updatedVault.depositAmount = 0;
             updatedVault.depositFee = 0;
             vaultCommitments[updatedVault.vaultIndex] = CommitmentVerificationLib.hashDepositVault(updatedVault);
+            emit Events.VaultUpdated(updatedVault);
         }
 
         // [9] update completed swap hash
