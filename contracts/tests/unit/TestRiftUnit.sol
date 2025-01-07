@@ -92,20 +92,24 @@ contract RiftExchangeUnitTest is RiftTest {
     }
 
     function testFuzz_depositLiquidityWithOverwrite(
-        uint256 initialDepositAmount,
+        uint256 depositAmountInSmallestTokenUnit,
         uint64 expectedSats,
-        uint256 toBeOverwrittenInitialDepositAmount,
+        uint256 toBeOverwrittendepositAmountInSmallestTokenUnit,
         uint64 toBeOverwrittenExpectedSats,
         bytes32 depositSalt,
         uint8 confirmationBlocks,
         uint256
     ) public {
         // [0] bound deposit amounts & expected sats
-        initialDepositAmount = bound(initialDepositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        depositAmountInSmallestTokenUnit = bound(
+            depositAmountInSmallestTokenUnit,
+            Constants.MIN_DEPOSIT_AMOUNT,
+            type(uint64).max
+        );
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
-        toBeOverwrittenInitialDepositAmount = bound(
-            toBeOverwrittenInitialDepositAmount,
+        toBeOverwrittendepositAmountInSmallestTokenUnit = bound(
+            toBeOverwrittendepositAmountInSmallestTokenUnit,
             Constants.MIN_DEPOSIT_AMOUNT,
             type(uint64).max
         );
@@ -115,7 +119,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [1] create initial deposit
         Types.DepositVault memory fullVault = _depositLiquidityWithAssertions(
-            toBeOverwrittenInitialDepositAmount,
+            toBeOverwrittendepositAmountInSmallestTokenUnit,
             toBeOverwrittenExpectedSats,
             confirmationBlocks
         );
@@ -130,14 +134,14 @@ contract RiftExchangeUnitTest is RiftTest {
         mockToken.transfer(address(0), mockToken.balanceOf(address(this)));
 
         // [4] prepare for overwrite deposit
-        mockToken.mint(address(this), initialDepositAmount);
-        mockToken.approve(address(exchange), initialDepositAmount);
+        mockToken.mint(address(this), depositAmountInSmallestTokenUnit);
+        mockToken.approve(address(exchange), depositAmountInSmallestTokenUnit);
 
         // [5] perform overwrite deposit
         vm.recordLogs();
         exchange.depositLiquidityWithOverwrite({
             specifiedPayoutAddress: address(this),
-            initialDepositAmount: initialDepositAmount,
+            depositAmountInSmallestTokenUnit: depositAmountInSmallestTokenUnit,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
             overwriteVault: emptyVault,
