@@ -4,11 +4,12 @@ pragma solidity ^0.8.27;
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {Constants} from "../../src/libraries/Constants.sol";
 import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
-import "../../src/libraries/CommitmentVerificationLib.sol";
+import {VaultLib} from "../../src/libraries/VaultLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
-import {MarketLib} from "../../src/libraries/MarketLib.sol";
+import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
+import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 import "forge-std/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
@@ -22,7 +23,7 @@ contract RiftExchangeUnitTest is RiftTest {
     function generateDepositVaultCommitment(Types.DepositVault[] memory vaults) internal pure returns (bytes32) {
         bytes32[] memory vaultHashes = new bytes32[](vaults.length);
         for (uint256 i = 0; i < vaults.length; i++) {
-            vaultHashes[i] = CommitmentVerificationLib.hashDepositVault(vaults[i]);
+            vaultHashes[i] = VaultLib.hashDepositVault(vaults[i]);
         }
         return EfficientHashLib.hash(vaultHashes);
     }
@@ -31,7 +32,7 @@ contract RiftExchangeUnitTest is RiftTest {
     function test_vaultCommitments(Types.DepositVault memory vault, uint256) public {
         // uint64 max here so it can be set easily in rust
         bound(vault.vaultIndex, 0, uint256(type(uint64).max));
-        bytes32 vault_commitment = CommitmentVerificationLib.hashDepositVault(vault);
+        bytes32 vault_commitment = VaultLib.hashDepositVault(vault);
         emit VaultLog(vault);
         emit VaultCommitmentLog(vault_commitment);
     }
@@ -51,7 +52,8 @@ contract RiftExchangeUnitTest is RiftTest {
                 specifiedPayoutAddress: vault.specifiedPayoutAddress,
                 ownerAddress: vault.ownerAddress,
                 nonce: vault.nonce,
-                confirmationBlocks: vault.confirmationBlocks
+                confirmationBlocks: vault.confirmationBlocks,
+                attestedBitcoinBlockHeight: vault.attestedBitcoinBlockHeight % 2016
             });
     }
 
@@ -137,6 +139,14 @@ contract RiftExchangeUnitTest is RiftTest {
         mockToken.mint(address(this), depositAmountInSmallestTokenUnit);
         mockToken.approve(address(exchange), depositAmountInSmallestTokenUnit);
 
+        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
+            blockHash: keccak256(abi.encodePacked("tip block hash")),
+            height: 100,
+            cumulativeChainwork: 100
+        });
+        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
+        tipBlockInclusionProof[0] = bytes32(uint256(100));
+
         // [5] perform overwrite deposit
         vm.recordLogs();
         exchange.depositLiquidityWithOverwrite({
@@ -146,7 +156,9 @@ contract RiftExchangeUnitTest is RiftTest {
             btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
             overwriteVault: emptyVault,
             depositSalt: depositSalt,
-            confirmationBlocks: confirmationBlocks
+            confirmationBlocks: confirmationBlocks,
+            tipBlockLeaf: tipBlockLeaf,
+            tipBlockInclusionProof: tipBlockInclusionProof
         });
 
         // [6] grab the logs, find the new vault
@@ -154,7 +166,7 @@ contract RiftExchangeUnitTest is RiftTest {
         bytes32 commitment = exchange.getVaultCommitment(emptyVault.vaultIndex);
 
         // [7] verify "offchain" calculated commitment matches stored vault commitment
-        bytes32 offchainCommitment = CommitmentVerificationLib.hashDepositVault(overwrittenVault);
+        bytes32 offchainCommitment = VaultLib.hashDepositVault(overwrittenVault);
         assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
 
         // [8] verify vault index remains the same
@@ -199,7 +211,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [4] verify updated vault commitment matches stored commitment
         bytes32 storedCommitment = exchange.getVaultCommitment(vault.vaultIndex);
-        bytes32 calculatedCommitment = CommitmentVerificationLib.hashDepositVault(updatedVault);
+        bytes32 calculatedCommitment = VaultLib.hashDepositVault(updatedVault);
         assertEq(calculatedCommitment, storedCommitment, "Vault commitment mismatch");
 
         // [5] verify vault is now empty
@@ -255,8 +267,6 @@ contract RiftExchangeUnitTest is RiftTest {
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         numVaults = uint8(bound(numVaults, 1, 100)); // Reasonable max to avoid gas issues
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint64).max));
-        uint256 totalSwapAmount = depositAmount * numVaults;
-        uint256 totalSwapFee = MarketLib.calculateFeeFromInitialDeposit(totalSwapAmount) * 2;
 
         // [1] create multiple deposit vaults
         Types.DepositVault[] memory vaults = new Types.DepositVault[](numVaults);
@@ -264,7 +274,10 @@ contract RiftExchangeUnitTest is RiftTest {
             vaults[i] = _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
         }
 
-        // [2] create dummy proof data
+        // [2] calculate correct swap totals from vaults
+        (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vaults);
+
+        // [3] create dummy proof data
         bytes32 proposedBlockHash = keccak256("proposed block");
         uint64 proposedBlockHeight = 100;
         uint256 proposedBlockCumulativeChainwork = 1000;
@@ -273,7 +286,15 @@ contract RiftExchangeUnitTest is RiftTest {
         bytes memory proof = new bytes(0);
         bytes memory compressedBlockLeaves = abi.encode("compressed leaves");
 
-        // [3] submit swap proof and capture logs
+        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
+            blockHash: keccak256(abi.encodePacked("tip block hash")),
+            height: 110,
+            cumulativeChainwork: 100
+        });
+        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
+        tipBlockInclusionProof[0] = bytes32(uint256(110));
+
+        // [4] submit swap proof and capture logs
         vm.recordLogs();
         exchange.submitSwapProof({
             swapBitcoinTxid: swapBitcoinTxid,
@@ -284,25 +305,27 @@ contract RiftExchangeUnitTest is RiftTest {
             newMmrRoot: newMmrRoot,
             confirmationBlocks: confirmationBlocks,
             totalSwapFee: totalSwapFee,
-            totalSwapOutput: totalSwapAmount,
+            totalSwapOutput: totalSwapOutput,
             proof: proof,
-            compressedBlockLeaves: compressedBlockLeaves
+            compressedBlockLeaves: compressedBlockLeaves,
+            tipBlockLeaf: tipBlockLeaf,
+            tipBlockInclusionProof: tipBlockInclusionProof
         });
 
-        // [4] extract swap from logs
+        // [5] extract swap from logs
         Types.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
         uint256 swapIndex = exchange.getSwapCommitmentsLength() - 1;
         bytes32 commitment = exchange.getSwapCommitment(swapIndex);
 
-        // [5] verify swap details
+        // [6] verify swap details
         assertEq(createdSwap.swapIndex, swapIndex, "Swap index should match");
         assertEq(createdSwap.specifiedPayoutAddress, address(this), "Payout address should match");
-        assertEq(createdSwap.totalSwapOutput, totalSwapAmount, "Swap amount should match");
+        assertEq(createdSwap.totalSwapOutput, totalSwapOutput, "Swap amount should match");
         assertEq(createdSwap.totalSwapFee, totalSwapFee, "Swap fee should match");
         assertEq(uint8(createdSwap.state), uint8(Types.SwapState.Proved), "Swap should be in Proved state");
 
-        // [6] verify commitment
-        bytes32 offchainCommitment = CommitmentVerificationLib.hashSwap(createdSwap);
+        // [7] verify commitment
+        bytes32 offchainCommitment = VaultLib.hashSwap(createdSwap);
         assertEq(offchainCommitment, commitment, "Offchain swap commitment should match");
     }
 
@@ -325,8 +348,7 @@ contract RiftExchangeUnitTest is RiftTest {
             vaults[i] = _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
         }
 
-        uint256 totalSwapOutput = _totalSwapOutputFromVaults(vaults);
-        uint256 totalSwapFee = _totalSwapFeeFromVaults(vaults);
+        (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vaults);
 
         uint64 proposedBlockHeight = 100;
         uint256 proposedBlockCumulativeChainwork = 1000;
@@ -361,6 +383,14 @@ contract RiftExchangeUnitTest is RiftTest {
         bytes memory proof = new bytes(0);
         bytes memory compressedBlockLeaves = abi.encode("compressed leaves");
 
+        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
+            blockHash: keccak256(abi.encodePacked("tip block hash")),
+            height: 110,
+            cumulativeChainwork: 100
+        });
+        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
+        tipBlockInclusionProof[0] = bytes32(uint256(110));
+
         vm.recordLogs();
         exchange.submitSwapProof({
             swapBitcoinTxid: swapBitcoinTxid,
@@ -373,14 +403,16 @@ contract RiftExchangeUnitTest is RiftTest {
             totalSwapFee: totalSwapFee,
             totalSwapOutput: totalSwapOutput,
             proof: proof,
-            compressedBlockLeaves: compressedBlockLeaves
+            compressedBlockLeaves: compressedBlockLeaves,
+            tipBlockLeaf: tipBlockLeaf,
+            tipBlockInclusionProof: tipBlockInclusionProof
         });
 
         // [4] extract swap from logs
         Types.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
 
         // [5] warp past challenge period
-        vm.warp(block.timestamp + Constants.CHALLENGE_PERIOD);
+        vm.warp(block.timestamp + RiftUtils.calculateChallengePeriod(11));
 
         // [6] record initial balances
         uint256 initialBalance = mockToken.balanceOf(address(this));
@@ -422,7 +454,7 @@ contract RiftExchangeUnitTest is RiftTest {
             Types.DepositVault memory emptyVault = vaults[i];
             emptyVault.depositAmount = 0;
             emptyVault.depositFee = 0;
-            bytes32 expectedCommitment = CommitmentVerificationLib.hashDepositVault(emptyVault);
+            bytes32 expectedCommitment = VaultLib.hashDepositVault(emptyVault);
             assertEq(vaultCommitment, expectedCommitment, "Vault should be empty");
         }
 
