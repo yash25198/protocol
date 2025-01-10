@@ -1582,6 +1582,7 @@ dependencies = [
  "prettytable",
  "rift-core",
  "rift-program",
+ "rift-sdk",
  "serde",
  "serde_json",
  "sp1-cuda",
@@ -5568,8 +5569,10 @@ dependencies = [
 name = "rift-sdk"
 version = "0.1.0"
 dependencies = [
+ "accumulators",
  "alloy",
  "bitcoin 0.32.5 (git+https://github.com/riftresearch/rust-bitcoin?tag=bitcoin-0.32.5-patch-v1)",
+ "bitcoin-light-client-core",
  "crypto-bigint",
  "rift-core",
  "serde",
@@ -7431,6 +7434,28 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "test-utils"
+version = "0.1.0"
+dependencies = [
+ "accumulators",
+ "alloy",
+ "bitcoin 0.32.5 (git+https://github.com/riftresearch/rust-bitcoin?tag=bitcoin-0.32.5-patch-v1)",
+ "bitcoin-light-client-core",
+ "bitcoind",
+ "chrono",
+ "clap",
+ "env_logger",
+ "eyre",
+ "futures",
+ "futures-util",
+ "hex",
+ "log",
+ "rift-core",
+ "rift-sdk",
+ "tokio",
 ]
 
 [[package]]

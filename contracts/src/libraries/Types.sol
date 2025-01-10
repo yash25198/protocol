@@ -5,7 +5,7 @@ library Types {
     // --------- LIGHT CLIENT TYPES --------- //
     struct BlockLeaf {
         bytes32 blockHash;
-        uint64 height;
+        uint32 height;
         uint256 cumulativeChainwork;
     }
 
@@ -65,5 +65,18 @@ library Types {
         bytes32 previousMmrRoot;
         bytes32 newMmrRoot;
         bytes32 compressedLeavesCommitment;
+    }
+
+    struct MMRProof {
+        BlockLeaf blockLeaf;
+        bytes32[] siblings;
+        bytes32[] peaks;
+        uint32 leafCount;
+        bytes32 mmrRoot;
+    }
+
+    struct ReleaseMMRProof {
+        MMRProof proof;
+        MMRProof tipProof;
     }
 }

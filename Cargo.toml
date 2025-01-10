@@ -8,7 +8,7 @@ members = [
   "crates/rift-sdk",
   "crates/rift-core", 
   "crates/rift-program",
-  "test-data",
+  "test-data", "bin/test-utils",
   # "integration-tests"
   ]
 

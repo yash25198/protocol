@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity ^0.8.27;
 
+import {console} from "forge-std/console.sol";
 import {ISP1Verifier} from "sp1-contracts/ISP1Verifier.sol";
 import {IERC20} from "openzeppelin/contracts/interfaces/IERC20.sol";
 import {IERC20Metadata} from "openzeppelin/contracts/interfaces/IERC20Metadata.sol";
@@ -62,31 +63,33 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Deposits new liquidity into a new vault
     /// @param specifiedPayoutAddress Address to receive swap proceeds
-    /// @param depositAmountInSmallestTokenUnit Amount of ERC20 tokens to deposit including fee
+    /// @param depositAmount Amount of ERC20 tokens to deposit including fee
     /// @param expectedSats Expected BTC output in satoshis
     /// @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
     /// @param depositSalt User generated salt for vault nonce
     function depositLiquidity(
         address specifiedPayoutAddress,
-        uint256 depositAmountInSmallestTokenUnit,
+        uint256 depositAmount,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
         bytes32 depositSalt,
         uint8 confirmationBlocks,
         Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockInclusionProof
+        bytes32[] calldata tipBlockSiblings,
+        bytes32[] calldata tipBlockPeaks
     ) public {
         // [0] create deposit liquidity request
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(
             specifiedPayoutAddress,
-            depositAmountInSmallestTokenUnit,
+            depositAmount,
             expectedSats,
             btcPayoutScriptPubKey,
             vaultCommitments.length,
             depositSalt,
             confirmationBlocks,
             tipBlockLeaf,
-            tipBlockInclusionProof
+            tipBlockSiblings,
+            tipBlockPeaks
         );
 
         // [1] add deposit hash to vault commitments
@@ -101,26 +104,28 @@ contract RiftExchange is BitcoinLightClient {
     /// @dev Identical to depositLiquidity, but allows for overwriting an existing empty vault
     function depositLiquidityWithOverwrite(
         address specifiedPayoutAddress,
-        uint256 depositAmountInSmallestTokenUnit,
+        uint256 depositAmount,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
         bytes32 depositSalt,
         uint8 confirmationBlocks,
         Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockInclusionProof,
+        bytes32[] calldata tipBlockSiblings,
+        bytes32[] calldata tipBlockPeaks,
         Types.DepositVault calldata overwriteVault
     ) public {
         // [0] create deposit liquidity request
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(
             specifiedPayoutAddress,
-            depositAmountInSmallestTokenUnit,
+            depositAmount,
             expectedSats,
             btcPayoutScriptPubKey,
             overwriteVault.vaultIndex,
             depositSalt,
             confirmationBlocks,
             tipBlockLeaf,
-            tipBlockInclusionProof
+            tipBlockSiblings,
+            tipBlockPeaks
         );
 
         // [1] ensure passed vault is real and overwritable
@@ -139,17 +144,18 @@ contract RiftExchange is BitcoinLightClient {
     /// @return Tuple of the new vault and its commitment hash
     function _prepareDeposit(
         address specifiedPayoutAddress,
-        uint256 depositAmountInSmallestTokenUnit,
+        uint256 depositAmount,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
         uint256 depositVaultIndex,
         bytes32 depositSalt,
         uint8 confirmationBlocks,
         Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockInclusionProof
+        bytes32[] calldata tipBlockSiblings,
+        bytes32[] calldata tipBlockPeaks
     ) internal view returns (Types.DepositVault memory, bytes32) {
         // [0] ensure deposit amount is greater than min protocol fee
-        if (depositAmountInSmallestTokenUnit < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
+        if (depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
 
         // [1] ensure expected sat output is above minimum to prevent dust errors
         if (expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
@@ -158,15 +164,15 @@ contract RiftExchange is BitcoinLightClient {
         if (!VaultLib.validateP2WPKHScriptPubKey(btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
 
         // [3] ensure tip block is part of the longest chain
-        if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockInclusionProof))
+        if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockSiblings, tipBlockPeaks))
             revert Errors.InvalidTipBlockInclusionProof();
 
-        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(depositAmountInSmallestTokenUnit);
+        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(depositAmount);
 
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,
             depositTimestamp: uint64(block.timestamp),
-            depositAmount: depositAmountInSmallestTokenUnit - depositFee,
+            depositAmount: depositAmount - depositFee,
             depositFee: depositFee,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
@@ -240,7 +246,8 @@ contract RiftExchange is BitcoinLightClient {
         bytes calldata proof,
         bytes calldata compressedBlockLeaves,
         Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockInclusionProof
+        bytes32[] calldata tipBlockSiblings,
+        bytes32[] calldata tipBlockPeaks
     ) internal returns (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) {
         // [0] Validate various parameters align with what requested makers have set (this could be done in circuit)
         uint64 oldestDepositorAttestedBitcoinBlockHeight = VaultLib.getOldestAttestedBitcoinBlockHeightFromVaults(
@@ -276,7 +283,7 @@ contract RiftExchange is BitcoinLightClient {
         VERIFIER.verifyProof(CIRCUIT_VERIFICATION_KEY, publicInputs, proof);
         _updateRoot(priorMmrRoot, newMmrRoot);
 
-        if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockInclusionProof))
+        if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockSiblings, tipBlockPeaks))
             revert Errors.InvalidTipBlockInclusionProof();
 
         // [4] calculate block delta
@@ -322,7 +329,8 @@ contract RiftExchange is BitcoinLightClient {
         bytes calldata proof,
         bytes calldata compressedBlockLeaves,
         Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockInclusionProof
+        bytes32[] calldata tipBlockSiblings,
+        bytes32[] calldata tipBlockPeaks
     ) public {
         // [0] validate swap proof
         (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) = _validateSwap(
@@ -339,7 +347,8 @@ contract RiftExchange is BitcoinLightClient {
             proof,
             compressedBlockLeaves,
             tipBlockLeaf,
-            tipBlockInclusionProof
+            tipBlockSiblings,
+            tipBlockPeaks
         );
 
         // [1] update swap commitments with updated swap hash
@@ -362,9 +371,10 @@ contract RiftExchange is BitcoinLightClient {
         uint256 totalSwapOutput,
         bytes calldata proof,
         bytes calldata compressedBlockLeaves,
-        Types.ProposedSwap calldata overwriteSwap,
         Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockInclusionProof
+        bytes32[] calldata tipBlockSiblings,
+        bytes32[] calldata tipBlockPeaks,
+        Types.ProposedSwap calldata overwriteSwap
     ) public {
         // [0] validate overwrite swap exists and is completed
         VaultLib.validateSwapCommitment(overwriteSwap, swapCommitments);
@@ -385,7 +395,8 @@ contract RiftExchange is BitcoinLightClient {
             proof,
             compressedBlockLeaves,
             tipBlockLeaf,
-            tipBlockInclusionProof
+            tipBlockSiblings,
+            tipBlockPeaks
         );
 
         // [2] update swap commitments with updated swap hash
@@ -396,11 +407,14 @@ contract RiftExchange is BitcoinLightClient {
     function releaseLiquidity(
         Types.ProposedSwap calldata swap,
         uint256 swapBlockChainwork,
-        uint64 swapBlockHeight,
-        bytes32[] calldata bitcoinSwapBlockInclusionProof,
-        bytes32[] calldata bitcoinConfirmationBlockInclusionProof,
+        uint32 swapBlockHeight,
+        bytes32[] calldata bitcoinSwapBlockSiblings,
+        bytes32[] calldata bitcoinSwapBlockPeaks,
         Types.BlockLeaf calldata bitcoinConfirmationBlockLeaf,
-        Types.DepositVault[] calldata utilizedVaults
+        bytes32[] calldata bitcoinConfirmationBlockSiblings,
+        bytes32[] calldata bitcoinConfirmationBlockPeaks,
+        Types.DepositVault[] calldata utilizedVaults,
+        uint32 tipBlockHeight
     ) public {
         // [0] validate swaps exists
         VaultLib.validateSwapCommitment(swap, swapCommitments);
@@ -422,15 +436,21 @@ contract RiftExchange is BitcoinLightClient {
         });
 
         // [3] ensure swap block is part of longest chain
-        if (!_proveBlockInclusion(swapBlockLeaf, bitcoinSwapBlockInclusionProof))
+        if (!_proveBlockInclusion(swapBlockLeaf, bitcoinSwapBlockSiblings, bitcoinSwapBlockPeaks, tipBlockHeight))
             revert Errors.InvalidSwapBlockInclusionProof();
 
         // [4] ensure the supposed confirmation block is part of the longest chain
-        if (!_proveBlockInclusion(bitcoinConfirmationBlockLeaf, bitcoinConfirmationBlockInclusionProof))
-            revert Errors.InvalidConfirmationBlockInclusionProof();
+        if (
+            !_proveBlockInclusion(
+                bitcoinConfirmationBlockLeaf,
+                bitcoinConfirmationBlockSiblings,
+                bitcoinConfirmationBlockPeaks,
+                tipBlockHeight
+            )
+        ) revert Errors.InvalidConfirmationBlockInclusionProof();
 
         // [5] ensure the confirmation block delta is what the maker expects
-        if (bitcoinConfirmationBlockLeaf.height != swapBlockHeight + swap.confirmationBlocks - 1)
+        if (bitcoinConfirmationBlockLeaf.height != swapBlockHeight + swap.confirmationBlocks)
             revert Errors.InvalidConfirmationBlockDelta();
 
         // [6] ensure all utilized vaults hash to the aggregate vault commitment
@@ -447,6 +467,7 @@ contract RiftExchange is BitcoinLightClient {
             updatedVault.depositAmount = 0;
             updatedVault.depositFee = 0;
             vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
+            // TODO: Refactor to emit a single event for n vaults
             emit Events.VaultUpdated(updatedVault);
         }
 
@@ -463,6 +484,7 @@ contract RiftExchange is BitcoinLightClient {
         emit Events.SwapUpdated(updatedSwap);
 
         // [12] release funds to buyers ETH payout address
+        // TODO: Use a safe erc20 transfer library
         if (!DEPOSIT_TOKEN.transfer(swap.specifiedPayoutAddress, swap.totalSwapOutput)) revert Errors.TransferFailed();
     }
 

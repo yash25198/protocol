@@ -6,8 +6,10 @@ import {IERC20} from "openzeppelin/contracts/interfaces/IERC20.sol";
 import {ERC1967Proxy} from "openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {SP1MockVerifier} from "sp1-contracts/SP1MockVerifier.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
 import "forge-std/console.sol";
 
+import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {VaultLib} from "../../src/libraries/VaultLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
@@ -458,20 +460,15 @@ contract RiftTest is Test, PRNG {
     MockToken public mockToken;
     SP1MockVerifier public verifier;
 
-    function setUp() public {
+    function setUp() public virtual {
         mockToken = new MockToken("Mock Token", "MTK", 6);
         verifier = new SP1MockVerifier();
 
-        bytes32 mmrRoot = keccak256(abi.encodePacked("mmr root"));
-        Types.BlockLeaf memory initialCheckpointLeaf = Types.BlockLeaf({
-            blockHash: keccak256(abi.encodePacked("initial block")),
-            height: 0,
-            cumulativeChainwork: 0
-        });
+        Types.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
         exchange = new RiftExchange({
-            _mmrRoot: mmrRoot,
-            _initialCheckpointLeaf: initialCheckpointLeaf,
+            _mmrRoot: initial_mmr_proof.mmrRoot,
+            _initialCheckpointLeaf: initial_mmr_proof.blockLeaf,
             _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
@@ -487,6 +484,70 @@ contract RiftTest is Test, PRNG {
         curlInputs[1] = "-c";
         curlInputs[2] = cmd;
         return vm.ffi(curlInputs);
+    }
+
+    // cargo build --release --bin test-utils
+    function _buildTestUtilsBin() internal returns (bytes memory) {
+        return _callFFI("cargo build --release --bin test-utils");
+    }
+
+    function _callTestUtilsGenerateFakeBlockMMRProof(uint32 height) internal returns (bytes memory) {
+        string memory cmd = string.concat(
+            "../target/release/test-utils generate-fake-block-mmr-proof --height ",
+            vm.toString(height)
+        );
+        return _callFFI(cmd);
+    }
+
+    function _callTestUtilsGenerateFakeBlockWithConfirmationsMMRProof(
+        uint32 height,
+        uint32 confirmations
+    ) internal returns (bytes memory) {
+        string memory cmd = string.concat(
+            "../target/release/test-utils generate-fake-block-with-confirmations-mmr-proof --height ",
+            vm.toString(height),
+            " --confirmations ",
+            vm.toString(confirmations)
+        );
+        return _callFFI(cmd);
+    }
+
+    function _callTestUtilsHashBlockLeaf(bytes memory leaf) internal returns (bytes32) {
+        string memory cmd = string.concat(
+            "../target/release/test-utils hash-block-leaf --abi-encoded-leaf ",
+            vm.toString(leaf)
+        );
+        return bytes32(_callFFI(cmd));
+    }
+
+    function _generateFakeBlockMMRProofFFI(uint32 height) public returns (Types.MMRProof memory) {
+        bytes memory encodedProof = _callTestUtilsGenerateFakeBlockMMRProof(height);
+        Types.MMRProof memory proof = abi.decode(encodedProof, (Types.MMRProof));
+        return proof;
+    }
+
+    function _generateFakeBlockWithConfirmationsMMRProofFFI(
+        uint32 height,
+        uint32 confirmations
+    ) public returns (Types.MMRProof memory, Types.MMRProof memory) {
+        bytes memory combinedEncodedProofs = _callTestUtilsGenerateFakeBlockWithConfirmationsMMRProof(
+            height,
+            confirmations
+        );
+        Types.ReleaseMMRProof memory releaseProof = abi.decode(combinedEncodedProofs, (Types.ReleaseMMRProof));
+        return (releaseProof.proof, releaseProof.tipProof);
+    }
+
+    function _hashBlockLeafFFI(Types.BlockLeaf memory leaf) public returns (bytes32) {
+        bytes memory encodedLeaf = abi.encode(leaf);
+        bytes32 hashedLeaf = _callTestUtilsHashBlockLeaf(encodedLeaf);
+        return hashedLeaf;
+    }
+
+    function _getMockProof() internal pure returns (bytes memory, bytes memory) {
+        bytes memory proof = new bytes(0);
+        bytes memory compressedBlockLeaves = abi.encode("compressed leaves");
+        return (proof, compressedBlockLeaves);
     }
 
     function _generateBtcPayoutScriptPubKey() internal returns (bytes22) {
@@ -525,26 +586,20 @@ contract RiftTest is Test, PRNG {
 
         bytes32 depositSalt = bytes32(keccak256(abi.encode(_random())));
 
-        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
-            blockHash: keccak256(abi.encodePacked("tip block hash")),
-            height: 100,
-            cumulativeChainwork: 100
-        });
-
-        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
-        tipBlockInclusionProof[0] = bytes32(uint256(100));
+        Types.MMRProof memory mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
         // [3] test deposit
         vm.recordLogs();
         exchange.depositLiquidity({
             specifiedPayoutAddress: address(this),
-            depositAmountInSmallestTokenUnit: depositAmount,
+            depositAmount: depositAmount,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
             depositSalt: depositSalt,
             confirmationBlocks: confirmationBlocks,
-            tipBlockLeaf: tipBlockLeaf,
-            tipBlockInclusionProof: tipBlockInclusionProof
+            tipBlockLeaf: mmr_proof.blockLeaf,
+            tipBlockSiblings: mmr_proof.siblings,
+            tipBlockPeaks: mmr_proof.peaks
         });
 
         // [4] grab the logs, find the vault

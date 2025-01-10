@@ -51,15 +51,19 @@ abstract contract BitcoinLightClient {
 
     function _proveBlockInclusion(
         Types.BlockLeaf memory blockLeaf,
-        bytes32[] calldata inclusionProof
+        bytes32[] calldata siblings,
+        bytes32[] calldata peaks,
+        uint32 tipBlockHeight
     ) public view returns (bool) {
-        return LightClientVerificationLib.proveBlockInclusion(blockLeaf, inclusionProof, mmrRoot);
+        return LightClientVerificationLib.proveBlockInclusion(blockLeaf, siblings, peaks, tipBlockHeight + 1, mmrRoot);
     }
 
     function _proveBlockInclusionAtTip(
         Types.BlockLeaf memory blockLeaf,
-        bytes32[] calldata inclusionProof
+        bytes32[] calldata siblings,
+        bytes32[] calldata peaks
     ) public view returns (bool) {
-        return LightClientVerificationLib.proveBlockInclusionAtTip(blockLeaf, inclusionProof, mmrRoot);
+        return
+            LightClientVerificationLib.proveBlockInclusion(blockLeaf, siblings, peaks, blockLeaf.height + 1, mmrRoot);
     }
 }

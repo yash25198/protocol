@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 rift-core = { workspace = true }
+bitcoin-light-client-core = { workspace = true }
+
+accumulators = { workspace = true }
 alloy = {workspace = true }
 thiserror = { workspace = true }
 bitcoin = { workspace = true }

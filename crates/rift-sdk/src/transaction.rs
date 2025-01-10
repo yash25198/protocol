@@ -5,7 +5,6 @@ use bitcoin::script::Builder;
 use bitcoin::sighash::SighashCache;
 use bitcoin::{
     consensus::Encodable,
-    hashes::Hash,
     secp256k1::{self, Secp256k1, SecretKey},
     EcdsaSighashType, PublicKey, Transaction, TxIn, Witness,
 };
@@ -14,7 +13,7 @@ use bitcoin::{
     ScriptBuf, Sequence, TxOut, Txid,
 };
 
-use crypto_bigint::{NonZero, U256};
+use rift_core::types::DepositVault;
 use std::str::FromStr;
 
 pub struct P2WPKHBitcoinWallet {
@@ -75,20 +74,17 @@ pub fn serialize_no_segwit(tx: &Transaction) -> Vec<u8> {
         .expect("Encoding lock_time failed");
     buffer
 }
-/*
 
 pub fn build_rift_payment_transaction(
     order_nonce: [u8; 32],
-    liquidity_providers: &[LiquidityReservation],
-    in_txid: [u8; 32],
+    deposit_vaults: &[DepositVault],
+    in_txid: Txid,
     transaction: &Transaction,
     in_txvout: u32,
     wallet: &P2WPKHBitcoinWallet,
     fee_sats: u64,
 ) -> Transaction {
-    // Fetch transaction data (you'll need to implement this function)
-
-    let total_lp_sum_btc: u64 = liquidity_providers.iter().map(|lp| lp.expected_sats).sum();
+    let total_lp_sum_btc: u64 = deposit_vaults.iter().map(|lp| lp.expectedSats).sum();
 
     let vin_sats = transaction.output[in_txvout as usize].value.to_sat();
 
@@ -98,9 +94,9 @@ pub fn build_rift_payment_transaction(
     let mut tx_outs = Vec::new();
 
     // Add liquidity provider outputs
-    for lp in liquidity_providers {
-        let amount = lp.expected_sats;
-        let script = Script::from_bytes(&lp.script_pub_key);
+    for lp in deposit_vaults {
+        let amount = lp.expectedSats;
+        let script = Script::from_bytes(&lp.btcPayoutScriptPubKey.0);
         tx_outs.push(TxOut {
             value: Amount::from_sat(amount),
             script_pubkey: script.into(),
@@ -127,15 +123,7 @@ pub fn build_rift_payment_transaction(
     }
 
     // Create input
-    let outpoint = OutPoint::new(
-        Txid::from_slice(
-            &TryInto::<[u8; 32]>::try_into((in_txid).as_slice())
-                .unwrap()
-                .to_little_endian(),
-        )
-        .unwrap(),
-        in_txvout,
-    );
+    let outpoint = OutPoint::new(in_txid, in_txvout);
     let tx_in = TxIn {
         previous_output: outpoint,
         script_sig: Script::new().into(),
@@ -196,5 +184,3 @@ fn sign_transaction(
 
     tx.clone()
 }
-
-*/

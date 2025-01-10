@@ -1,5 +1,5 @@
 pub mod bindings;
-pub mod proof;
+pub mod mmr;
 pub mod transaction;
 
 mod errors;

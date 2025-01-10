@@ -17,9 +17,11 @@ contract RiftExchangeUnitTest is RiftTest {
     event VaultLog(Types.DepositVault vault);
     event VaultCommitmentLog(bytes32 vaultCommitment);
     event LogVaults(Types.DepositVault[] vaults);
+    uint256 constant MAX_VAULTS = 2;
 
     // functional clone of validateDepositVaultCommitments, but doesn't attempt to validate the vaults existence in storage
     // used to generate test data for circuits
+    // TODO: directly call the rust api from here as part of fuzzer
     function generateDepositVaultCommitment(Types.DepositVault[] memory vaults) internal pure returns (bytes32) {
         bytes32[] memory vaultHashes = new bytes32[](vaults.length);
         for (uint256 i = 0; i < vaults.length; i++) {
@@ -29,12 +31,31 @@ contract RiftExchangeUnitTest is RiftTest {
     }
 
     // use to generate test data for circuits
+    // TODO: directly call the rust api from here as part of fuzzer
     function test_vaultCommitments(Types.DepositVault memory vault, uint256) public {
         // uint64 max here so it can be set easily in rust
         bound(vault.vaultIndex, 0, uint256(type(uint64).max));
         bytes32 vault_commitment = VaultLib.hashDepositVault(vault);
         emit VaultLog(vault);
         emit VaultCommitmentLog(vault_commitment);
+    }
+
+    // used to generate test data for circuits
+    // TODO: directly call the rust api from here as part of fuzzer
+    function test_blockLeafHasher() public pure {
+        Types.BlockLeaf memory blockLeaf = Types.BlockLeaf({
+            blockHash: hex"000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+            height: 0,
+            cumulativeChainwork: 4295032833
+        });
+
+        console.log("blockLeaf fields");
+        console.logBytes32(blockLeaf.blockHash);
+        console.logBytes32(bytes32(uint256(blockLeaf.height)));
+        console.logBytes32(bytes32(blockLeaf.cumulativeChainwork));
+
+        bytes32 blockLeafHash = LightClientVerificationLib.buildLeafCommitment(blockLeaf);
+        console.log("blockLeafHash");
     }
 
     function constrainVault(
@@ -94,24 +115,20 @@ contract RiftExchangeUnitTest is RiftTest {
     }
 
     function testFuzz_depositLiquidityWithOverwrite(
-        uint256 depositAmountInSmallestTokenUnit,
+        uint256 depositAmount,
         uint64 expectedSats,
-        uint256 toBeOverwrittendepositAmountInSmallestTokenUnit,
+        uint256 toBeOverwrittendepositAmount,
         uint64 toBeOverwrittenExpectedSats,
         bytes32 depositSalt,
         uint8 confirmationBlocks,
         uint256
     ) public {
         // [0] bound deposit amounts & expected sats
-        depositAmountInSmallestTokenUnit = bound(
-            depositAmountInSmallestTokenUnit,
-            Constants.MIN_DEPOSIT_AMOUNT,
-            type(uint64).max
-        );
+        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
-        toBeOverwrittendepositAmountInSmallestTokenUnit = bound(
-            toBeOverwrittendepositAmountInSmallestTokenUnit,
+        toBeOverwrittendepositAmount = bound(
+            toBeOverwrittendepositAmount,
             Constants.MIN_DEPOSIT_AMOUNT,
             type(uint64).max
         );
@@ -121,7 +138,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [1] create initial deposit
         Types.DepositVault memory fullVault = _depositLiquidityWithAssertions(
-            toBeOverwrittendepositAmountInSmallestTokenUnit,
+            toBeOverwrittendepositAmount,
             toBeOverwrittenExpectedSats,
             confirmationBlocks
         );
@@ -136,29 +153,25 @@ contract RiftExchangeUnitTest is RiftTest {
         mockToken.transfer(address(0), mockToken.balanceOf(address(this)));
 
         // [4] prepare for overwrite deposit
-        mockToken.mint(address(this), depositAmountInSmallestTokenUnit);
-        mockToken.approve(address(exchange), depositAmountInSmallestTokenUnit);
+        mockToken.mint(address(this), depositAmount);
+        mockToken.approve(address(exchange), depositAmount);
 
-        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
-            blockHash: keccak256(abi.encodePacked("tip block hash")),
-            height: 100,
-            cumulativeChainwork: 100
-        });
-        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
-        tipBlockInclusionProof[0] = bytes32(uint256(100));
+        // [5] generate fake tip block mmr proof
+        Types.MMRProof memory mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
-        // [5] perform overwrite deposit
+        // [6] perform overwrite deposit
         vm.recordLogs();
         exchange.depositLiquidityWithOverwrite({
             specifiedPayoutAddress: address(this),
-            depositAmountInSmallestTokenUnit: depositAmountInSmallestTokenUnit,
+            depositAmount: depositAmount,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
             overwriteVault: emptyVault,
             depositSalt: depositSalt,
             confirmationBlocks: confirmationBlocks,
-            tipBlockLeaf: tipBlockLeaf,
-            tipBlockInclusionProof: tipBlockInclusionProof
+            tipBlockLeaf: mmr_proof.blockLeaf,
+            tipBlockSiblings: mmr_proof.siblings,
+            tipBlockPeaks: mmr_proof.peaks
         });
 
         // [6] grab the logs, find the new vault
@@ -226,90 +239,61 @@ contract RiftExchangeUnitTest is RiftTest {
         );
     }
 
-    function _generateSimpleValidInclusionProof(
-        Types.BlockLeaf memory leaf
-    ) internal pure returns (bytes32[] memory proof, bytes32 root, bytes32 leafHash) {
-        // This represents a simple Merkle tree:
-        //       root (0xabc...)
-        //      /          \
-        //   leaf          0x123...
-        //   (block)       (other branch)
-
-        leafHash = LightClientVerificationLib.buildLeafCommitment(leaf);
-
-        bytes32 rightBranch = keccak256(abi.encodePacked("right branch"));
-
-        bytes32 leftNode = leafHash;
-        bytes32 rightNode = rightBranch;
-
-        if (uint256(leftNode) > uint256(rightNode)) {
-            (leftNode, rightNode) = (rightNode, leftNode);
-        }
-
-        root = keccak256(abi.encodePacked(leftNode, rightNode));
-
-        proof = new bytes32[](1);
-        proof[0] = rightBranch;
-
-        return (proof, root, leafHash);
+    struct SubmitSwapProofParams {
+        bytes32 swapBitcoinTxid;
+        uint256 depositAmount;
+        uint64 expectedSats;
+        uint8 numVaults;
+        uint8 confirmationBlocks;
     }
 
-    function testFuzz_submitSwapProof(
-        bytes32 swapBitcoinTxid,
-        uint256 depositAmount,
-        uint64 expectedSats,
-        uint8 numVaults,
-        uint8 confirmationBlocks,
-        uint256
-    ) public {
+    function testFuzz_submitSwapProof(SubmitSwapProofParams memory params, uint256) public {
         // [0] bound inputs
-        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
-        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
-        numVaults = uint8(bound(numVaults, 1, 100)); // Reasonable max to avoid gas issues
-        confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint64).max));
+        params.depositAmount = bound(params.depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        params.expectedSats = uint64(bound(params.expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
+        params.numVaults = uint8(bound(params.numVaults, 1, MAX_VAULTS)); // Reasonable max to avoid gas issues
+        params.confirmationBlocks = uint8(
+            bound(params.confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
+        );
 
         // [1] create multiple deposit vaults
-        Types.DepositVault[] memory vaults = new Types.DepositVault[](numVaults);
-        for (uint256 i = 0; i < numVaults; i++) {
-            vaults[i] = _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
+        Types.DepositVault[] memory vaults = new Types.DepositVault[](params.numVaults);
+        for (uint256 i = 0; i < params.numVaults; i++) {
+            vaults[i] = _depositLiquidityWithAssertions(
+                params.depositAmount,
+                params.expectedSats,
+                params.confirmationBlocks
+            );
         }
 
         // [2] calculate correct swap totals from vaults
         (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vaults);
 
         // [3] create dummy proof data
-        bytes32 proposedBlockHash = keccak256("proposed block");
-        uint64 proposedBlockHeight = 100;
-        uint256 proposedBlockCumulativeChainwork = 1000;
-        bytes32 priorMmrRoot = exchange.mmrRoot();
-        bytes32 newMmrRoot = keccak256("new mmr root");
-        bytes memory proof = new bytes(0);
-        bytes memory compressedBlockLeaves = abi.encode("compressed leaves");
+        (bytes memory proof, bytes memory compressedBlockLeaves) = _getMockProof();
 
-        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
-            blockHash: keccak256(abi.encodePacked("tip block hash")),
-            height: 110,
-            cumulativeChainwork: 100
-        });
-        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
-        tipBlockInclusionProof[0] = bytes32(uint256(110));
+        // [4] create dummy tip block data
+        bytes32 priorMmrRoot = exchange.mmrRoot();
+
+        Types.MMRProof memory mmrProof = _generateFakeBlockMMRProofFFI(1);
 
         // [4] submit swap proof and capture logs
         vm.recordLogs();
         exchange.submitSwapProof({
-            swapBitcoinTxid: swapBitcoinTxid,
-            swapBitcoinBlockHash: proposedBlockHash,
+            swapBitcoinTxid: params.swapBitcoinTxid,
+            swapBitcoinBlockHash: mmrProof.blockLeaf.blockHash,
             vaults: vaults,
             specifiedPayoutAddress: address(this),
             priorMmrRoot: priorMmrRoot,
-            newMmrRoot: newMmrRoot,
-            confirmationBlocks: confirmationBlocks,
+            newMmrRoot: mmrProof.mmrRoot,
+            confirmationBlocks: params.confirmationBlocks,
             totalSwapFee: totalSwapFee,
             totalSwapOutput: totalSwapOutput,
             proof: proof,
             compressedBlockLeaves: compressedBlockLeaves,
-            tipBlockLeaf: tipBlockLeaf,
-            tipBlockInclusionProof: tipBlockInclusionProof
+            tipBlockLeaf: mmrProof.blockLeaf,
+            tipBlockSiblings: mmrProof.siblings,
+            tipBlockPeaks: mmrProof.peaks
         });
 
         // [5] extract swap from logs
@@ -329,113 +313,70 @@ contract RiftExchangeUnitTest is RiftTest {
         assertEq(offchainCommitment, commitment, "Offchain swap commitment should match");
     }
 
-    function testFuzz_releaseLiquidity(
-        bytes32 swapBitcoinTxid,
-        uint256 depositAmount,
-        uint64 expectedSats,
-        uint8 numVaults,
-        uint8 confirmationBlocks,
-        uint256
-    ) public {
-        // [0] bound inputs
-        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
-        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
-        numVaults = uint8(bound(numVaults, 1, 100)); // Reasonable max to avoid gas issues
-        confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
-        // [1] create multiple deposit vaults
-        Types.DepositVault[] memory vaults = new Types.DepositVault[](numVaults);
-        for (uint256 i = 0; i < numVaults; i++) {
-            vaults[i] = _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
+    // Helper function to set up vaults and submit swap proof
+    function _setupVaultsAndSubmitSwap(
+        ReleaseLiquidityParams memory params
+    )
+        internal
+        returns (
+            Types.DepositVault[] memory vaults,
+            Types.ProposedSwap memory createdSwap,
+            Types.MMRProof memory swapMmrProof,
+            Types.MMRProof memory tipMmrProof
+        )
+    {
+        // Create multiple deposit vaults
+        vaults = new Types.DepositVault[](params.numVaults);
+        for (uint256 i = 0; i < params.numVaults; i++) {
+            vaults[i] = _depositLiquidityWithAssertions(
+                params.depositAmount,
+                params.expectedSats,
+                params.confirmationBlocks
+            );
         }
 
         (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vaults);
-
-        uint64 proposedBlockHeight = 100;
-        uint256 proposedBlockCumulativeChainwork = 1000;
-        bytes32 proposedBlockHash = keccak256("proposed block");
-        bytes32 confirmationBlockHash = keccak256("confirmation block");
-        uint64 confirmationBlockHeight = proposedBlockHeight + confirmationBlocks - 1;
-        uint256 confirmationBlockCumulativeChainwork = proposedBlockCumulativeChainwork + 1;
-
-        // [2] generate valid merkle proof components
-        (bytes32[] memory inclusionProof, bytes32 mmrRoot, ) = _generateSimpleValidInclusionProof(
-            Types.BlockLeaf({
-                blockHash: proposedBlockHash,
-                height: proposedBlockHeight,
-                cumulativeChainwork: proposedBlockCumulativeChainwork
-            })
-        );
-
-        Types.BlockLeaf memory bitcoinConfirmationBlockLeaf = Types.BlockLeaf({
-            blockHash: confirmationBlockHash,
-            height: confirmationBlockHeight,
-            cumulativeChainwork: confirmationBlockCumulativeChainwork
-        });
-
-        (
-            bytes32[] memory bitcoinConfirmationBlockInclusionProof,
-            bytes32 _mmrRoot,
-
-        ) = _generateSimpleValidInclusionProof(bitcoinConfirmationBlockLeaf);
+        (bytes memory proof, bytes memory compressedBlockLeaves) = _getMockProof();
 
         bytes32 priorMmrRoot = exchange.mmrRoot();
-        bytes32 newMmrRoot = mmrRoot; // Use our valid MMR root
-        bytes memory proof = new bytes(0);
-        bytes memory compressedBlockLeaves = abi.encode("compressed leaves");
+        (
+            Types.MMRProof memory swapMmrProof,
+            Types.MMRProof memory tipMmrProof
+        ) = _generateFakeBlockWithConfirmationsMMRProofFFI(1, params.confirmationBlocks);
 
-        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
-            blockHash: keccak256(abi.encodePacked("tip block hash")),
-            height: 110,
-            cumulativeChainwork: 100
-        });
-        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
-        tipBlockInclusionProof[0] = bytes32(uint256(110));
+        assertEq(swapMmrProof.mmrRoot, tipMmrProof.mmrRoot, "Mmr roots should match");
 
         vm.recordLogs();
         exchange.submitSwapProof({
-            swapBitcoinTxid: swapBitcoinTxid,
-            swapBitcoinBlockHash: proposedBlockHash,
+            swapBitcoinTxid: params.swapBitcoinTxid,
+            swapBitcoinBlockHash: swapMmrProof.blockLeaf.blockHash,
             vaults: vaults,
             specifiedPayoutAddress: address(this),
             priorMmrRoot: priorMmrRoot,
-            newMmrRoot: newMmrRoot,
-            confirmationBlocks: confirmationBlocks,
+            newMmrRoot: swapMmrProof.mmrRoot,
+            confirmationBlocks: params.confirmationBlocks,
             totalSwapFee: totalSwapFee,
             totalSwapOutput: totalSwapOutput,
             proof: proof,
             compressedBlockLeaves: compressedBlockLeaves,
-            tipBlockLeaf: tipBlockLeaf,
-            tipBlockInclusionProof: tipBlockInclusionProof
+            tipBlockLeaf: tipMmrProof.blockLeaf,
+            tipBlockSiblings: tipMmrProof.siblings,
+            tipBlockPeaks: tipMmrProof.peaks
         });
 
-        // [4] extract swap from logs
-        Types.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
+        createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
+        return (vaults, createdSwap, swapMmrProof, tipMmrProof);
+    }
 
-        // [5] warp past challenge period
-        vm.warp(block.timestamp + RiftUtils.calculateChallengePeriod(11));
-
-        // [6] record initial balances
-        uint256 initialBalance = mockToken.balanceOf(address(this));
-        uint256 initialFeeBalance = exchange.accumulatedFeeBalance();
-
-        // [7] release liquidity using our valid merkle proof
-        vm.recordLogs();
-
-        exchange.releaseLiquidity(
-            createdSwap,
-            proposedBlockCumulativeChainwork,
-            proposedBlockHeight,
-            inclusionProof,
-            bitcoinConfirmationBlockInclusionProof,
-            bitcoinConfirmationBlockLeaf,
-            vaults
-        );
-
-        // [8] verify swap was marked as completed
-        Types.ProposedSwap memory updatedSwap = _extractSwapFromLogs(vm.getRecordedLogs());
-        assertEq(uint8(updatedSwap.state), uint8(Types.SwapState.Completed), "Swap should be completed");
-
-        // [9] verify funds were transferred correctly
+    // Helper function to verify balances and empty vaults
+    function _verifyBalancesAndVaults(
+        Types.DepositVault[] memory vaults,
+        uint256 initialBalance,
+        uint256 initialFeeBalance,
+        uint256 totalSwapOutput,
+        uint256 totalSwapFee
+    ) internal {
+        // Verify funds were transferred correctly
         assertEq(
             mockToken.balanceOf(address(this)),
             initialBalance + totalSwapOutput,
@@ -448,7 +389,7 @@ contract RiftExchangeUnitTest is RiftTest {
             "Incorrect fee amount accumulated"
         );
 
-        // [10] verify vaults were emptied
+        // Verify vaults were emptied
         for (uint256 i = 0; i < vaults.length; i++) {
             bytes32 vaultCommitment = exchange.getVaultCommitment(vaults[i].vaultIndex);
             Types.DepositVault memory emptyVault = vaults[i];
@@ -457,16 +398,73 @@ contract RiftExchangeUnitTest is RiftTest {
             bytes32 expectedCommitment = VaultLib.hashDepositVault(emptyVault);
             assertEq(vaultCommitment, expectedCommitment, "Vault should be empty");
         }
+    }
 
-        // [11] verify that if we send the fees to the fee router, the fee router has the correct balance
+    struct ReleaseLiquidityParams {
+        bytes32 swapBitcoinTxid;
+        uint256 depositAmount;
+        uint64 expectedSats;
+        uint8 numVaults;
+        uint8 confirmationBlocks;
+    }
+
+    function testFuzz_releaseLiquidity(ReleaseLiquidityParams memory params, uint256) public {
+        // Bound inputs
+        params.depositAmount = bound(params.depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
+        params.expectedSats = uint64(bound(params.expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
+        params.numVaults = uint8(bound(params.numVaults, 1, MAX_VAULTS));
+        params.confirmationBlocks = uint8(
+            bound(params.confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
+        );
+
+        console.log("[0] setup vaults and submit swap");
+
+        // Set up vaults and submit swap
+        (
+            Types.DepositVault[] memory vaults,
+            Types.ProposedSwap memory createdSwap,
+            Types.MMRProof memory swapMmrProof,
+            Types.MMRProof memory tipMmrProof
+        ) = _setupVaultsAndSubmitSwap(params);
+
+        // Record initial balances
+        uint256 initialBalance = mockToken.balanceOf(address(this));
+        uint256 initialFeeBalance = exchange.accumulatedFeeBalance();
+
+        // Warp past challenge period
+        vm.warp(block.timestamp + RiftUtils.calculateChallengePeriod(params.confirmationBlocks) + 2);
+
+        // Release liquidity
+        console.log("[1] release liquidity");
+        vm.recordLogs();
+        exchange.releaseLiquidity({
+            swap: createdSwap,
+            swapBlockChainwork: swapMmrProof.blockLeaf.cumulativeChainwork,
+            swapBlockHeight: swapMmrProof.blockLeaf.height,
+            bitcoinSwapBlockSiblings: swapMmrProof.siblings,
+            bitcoinSwapBlockPeaks: swapMmrProof.peaks,
+            bitcoinConfirmationBlockLeaf: tipMmrProof.blockLeaf,
+            bitcoinConfirmationBlockSiblings: tipMmrProof.siblings,
+            bitcoinConfirmationBlockPeaks: tipMmrProof.peaks,
+            utilizedVaults: vaults,
+            tipBlockHeight: tipMmrProof.blockLeaf.height
+        });
+
+        // Verify swap completion
+        Types.ProposedSwap memory updatedSwap = _extractSwapFromLogs(vm.getRecordedLogs());
+        assertEq(uint8(updatedSwap.state), uint8(Types.SwapState.Completed), "Swap should be completed");
+
+        // Verify balances and vaults
+        (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vaults);
+        _verifyBalancesAndVaults(vaults, initialBalance, initialFeeBalance, totalSwapOutput, totalSwapFee);
+
+        // Verify fee router balance and payout
         uint256 accountedFeeRouterBalancePrePayout = exchange.accumulatedFeeBalance();
         uint256 feeRouterBalancePrePayout = mockToken.balanceOf(address(exchange));
+
         assertEq(
             accountedFeeRouterBalancePrePayout,
             feeRouterBalancePrePayout,
-            // note that in the context of this test: this invariant is reasonable.
-            // but on a mainnet deployed contract, USDC could be sent to the contract
-            // which would cause this invariant to fail to be true
             "accounted fee balance should match the actual contract balance of USDC"
         );
 

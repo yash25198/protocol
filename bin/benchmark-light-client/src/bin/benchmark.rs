@@ -9,6 +9,9 @@ use std::time::Instant;
 
 use clap::Parser;
 use prettytable::{row, Table};
+use rift_sdk::mmr::{
+    client_mmr_proof_to_minimal_mmr_proof, create_keccak256_client_mmr, digest_to_hex,
+};
 use tokio::runtime::Runtime;
 
 use sp1_sdk::{include_elf, ProverClient, SP1ProvingKey, SP1Stdin};
@@ -32,48 +35,6 @@ use accumulators::{
 };
 
 use std::sync::Arc;
-
-pub fn digest_to_hex(digest: &Digest) -> String {
-    format!("0x{}", hex::encode(digest))
-}
-
-pub fn client_mmr_proof_to_minimal_mmr_proof(proof: &ClientMMRProof) -> MMRProof {
-    MMRProof {
-        siblings: proof
-            .siblings_hashes
-            .iter()
-            .map(|s| {
-                hex::decode(s.trim_start_matches("0x"))
-                    .unwrap()
-                    .try_into()
-                    .unwrap()
-            })
-            .collect(),
-        leaf_hash: hex::decode(proof.element_hash.clone().trim_start_matches("0x"))
-            .unwrap()
-            .try_into()
-            .unwrap(),
-        peaks: proof
-            .peaks_hashes
-            .iter()
-            .map(|s| {
-                hex::decode(s.trim_start_matches("0x"))
-                    .unwrap()
-                    .try_into()
-                    .unwrap()
-            })
-            .collect(),
-        leaf_count: elements_count_to_leaf_count(proof.elements_count).unwrap() as u32,
-        leaf_index: element_index_to_leaf_index(proof.element_index).unwrap() as u32,
-    }
-}
-
-pub fn create_keccak256_client_mmr() -> ClientMMR {
-    let store = InMemoryStore::default();
-    let store_rc = Arc::new(store);
-    let hasher = Arc::new(ClientKeccakHasher::new());
-    ClientMMR::new(store_rc, hasher, None)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BenchmarkType {

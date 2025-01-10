@@ -161,7 +161,11 @@ pub fn hash_nodes<H: Hasher>(left: &[u8], right: &[u8]) -> Digest {
 }
 
 pub fn get_root<H: Hasher>(leaf_count: u32, bagged_peak: &Digest) -> Digest {
-    hash_nodes::<H>(&leaf_count.to_be_bytes(), bagged_peak.as_ref())
+    // pad leaf_count to 32 bytes left (to match solidity impl)
+    let mut leaf_count_bytes = [0u8; 32];
+    leaf_count_bytes[28..].copy_from_slice(&leaf_count.to_be_bytes());
+
+    hash_nodes::<H>(&leaf_count_bytes, bagged_peak.as_ref())
 }
 
 pub fn bag_peaks<H: Hasher>(peaks: &[Digest]) -> Option<Digest> {
@@ -197,6 +201,8 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
     // First verify the proof up to a peak
     let mut current_hash = proof.leaf_hash;
 
+    println!("leaf hash: {}", hex::encode(proof.leaf_hash));
+
     let mut leaf_index = proof.leaf_index;
     // Apply each proof element to get to a peak
     for sibling in &proof.siblings {
@@ -209,6 +215,8 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
         };
     }
 
+    println!("computed leaf's peak: {}", hex::encode(current_hash));
+
     // Verify the computed peak exists in peaks array
     if !proof.peaks.contains(&current_hash) {
         return false;
@@ -216,8 +224,10 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
 
     // Verify the peaks produce the expected root
     let bagged_peaks = bag_peaks::<H>(&proof.peaks).unwrap();
+    println!("bagged peaks: {}", hex::encode(bagged_peaks));
 
     let computed_root = get_root::<H>(proof.leaf_count, &bagged_peaks);
+    println!("computed root: {}", hex::encode(computed_root));
     computed_root == *root
 }
 

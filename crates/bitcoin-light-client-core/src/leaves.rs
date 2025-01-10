@@ -39,12 +39,16 @@ impl BlockLeaf {
 
     pub fn hash<H: Hasher>(&self) -> [u8; 32] {
         // Concatenate all fields into a single buffer
-        let mut buffer = Vec::with_capacity(32 + 4 + 32);
+        let mut buffer = Vec::with_capacity(32 + 32 + 32);
         buffer.extend_from_slice(self.block_hash.as_ref());
-        buffer.extend_from_slice(&self.height.to_be_bytes());
+
+        // Left pad height to 32 bytes to match the solidity impl
+        let mut padded_height = [0u8; 32];
+        padded_height[28..].copy_from_slice(&self.height.to_be_bytes());
+        buffer.extend_from_slice(&padded_height);
+
         buffer.extend_from_slice(self.cumulative_chainwork.as_ref());
 
-        // Hash the concatenated buffer
         H::hash(&buffer)
     }
 
@@ -134,6 +138,8 @@ pub fn decompress_block_leaves(bytes: &[u8]) -> Vec<BlockLeaf> {
 
 #[cfg(test)]
 mod tests {
+    use crate::hasher::Keccak256Hasher;
+
     use super::*;
     use test_data_utils::TEST_HEADERS;
 
@@ -213,5 +219,17 @@ mod tests {
     fn test_chainwork_as_u256() {
         let leaf = get_genesis_leaf();
         assert_eq!(leaf.chainwork_as_u256(), U256::from_u64(4295032833));
+    }
+
+    // TODO: Compare solidity hasher to rust hasher
+
+    #[test]
+    fn test_block_leaf_hash() {
+        let leaf = get_genesis_leaf();
+        let hash = leaf.hash::<Keccak256Hasher>();
+        assert_eq!(
+            hash,
+            hex!("1f05e44006fa2411c12ffefe8397c210c0dd53d73d63d30afb84461df8819a92")
+        );
     }
 }
