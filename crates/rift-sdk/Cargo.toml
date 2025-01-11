@@ -15,3 +15,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 crypto-bigint = { workspace = true }
 sp1-sdk = { workspace = true }
+
+[build-dependencies]
+sp1-build = {workspace = true} 

@@ -15,3 +15,8 @@ curl -L https://sp1.succinct.xyz | bash
 source ~/.bashrc
 sp1up
 ```
+
+// TODO (ansible):
+- Add docker group + add user to it 
+- sudo apt-get install nvidia-container-toolkit
+- (restart docker service)

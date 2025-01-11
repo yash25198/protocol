@@ -18,7 +18,6 @@ accumulators.workspace = true
 hex.workspace = true
 alloy = { workspace = true }
 clap = { workspace = true }
-bitcoind = { workspace = true }
 bitcoin = { workspace = true }
 eyre = { workspace = true }
 tokio = { workspace = true }

@@ -5,7 +5,11 @@ pub mod transaction;
 mod errors;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::Hash;
+use sp1_sdk::include_elf;
 use std::fmt::Write;
+
+/// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
+pub const RIFT_PROGRAM_ELF: &[u8] = include_elf!("rift-program");
 
 pub fn load_hex_bytes(file: &str) -> Vec<u8> {
     let hex_string = std::fs::read_to_string(file).expect("Failed to read file");

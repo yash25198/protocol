@@ -9,12 +9,14 @@ use std::time::Instant;
 
 use clap::Parser;
 use prettytable::{row, Table};
-use rift_sdk::mmr::{
-    client_mmr_proof_to_minimal_mmr_proof, create_keccak256_client_mmr, digest_to_hex,
+use rift_sdk::{
+    mmr::{client_mmr_proof_to_minimal_mmr_proof, create_keccak256_client_mmr, digest_to_hex},
+    RIFT_PROGRAM_ELF,
 };
+
 use tokio::runtime::Runtime;
 
-use sp1_sdk::{include_elf, ProverClient, SP1ProvingKey, SP1Stdin};
+use sp1_sdk::{include_elf, EnvProver, ProverClient, SP1ProvingKey, SP1Stdin};
 use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS};
 
 use bitcoin_light_client_core::hasher::{Digest, Hasher, Keccak256Hasher};
@@ -23,8 +25,6 @@ use bitcoin_light_client_core::light_client::Header;
 
 use bitcoin_light_client_core::mmr::{CompactMerkleMountainRange, MMRProof};
 use bitcoin_light_client_core::{validate_chainwork, BlockPosition, ChainTransition};
-
-pub const RIFT_PROGRAM_ELF: &[u8] = include_elf!("rift-program");
 
 use accumulators::mmr::{
     element_index_to_leaf_index, elements_count_to_leaf_count, Proof as ClientMMRProof,
@@ -39,7 +39,8 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BenchmarkType {
     Execute,
-    ProveLocal,
+    ProveCPU,
+    ProveCUDA,
     ProveNetwork,
 }
 
@@ -66,7 +67,7 @@ fn format_duration(duration: std::time::Duration) -> String {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The type of benchmark to run: "execute", "prove-local", or "prove-network"
+    /// The type of benchmark to run: "execute", "prove-cpu", "prove-cuda", or "prove-network"
     #[arg(short, long, default_value = "execute")]
     r#type: String,
 }
@@ -326,18 +327,11 @@ async fn create_bch_overwrite_chain_transition(
 fn prove_chain_transition(
     chain_transition: ChainTransition,
     benchmark_type: BenchmarkType,
-    prover_client: &ProverClient,
+    prover_client: &EnvProver,
     proving_key: &SP1ProvingKey,
 ) -> BenchmarkResult {
     println!("Starting {:?} for chain transition...", benchmark_type);
     let start = Instant::now();
-
-    // Setup the SP1 prover environment
-    match benchmark_type {
-        BenchmarkType::ProveNetwork => std::env::set_var("SP1_PROVER", "network"),
-        BenchmarkType::ProveLocal => std::env::set_var("SP1_PROVER", "local"),
-        BenchmarkType::Execute => std::env::set_var("SP1_PROVER", "mock"),
-    }
 
     let program_input = rift_core::giga::RiftProgramInput::builder()
         .proof_type(rift_core::giga::ProofType::LightClient)
@@ -351,7 +345,7 @@ fn prove_chain_transition(
     match benchmark_type {
         BenchmarkType::Execute => {
             let (_output, report) = prover_client
-                .execute(RIFT_PROGRAM_ELF, stdin)
+                .execute(RIFT_PROGRAM_ELF, &stdin)
                 .run()
                 .unwrap();
             let duration = start.elapsed();
@@ -366,9 +360,9 @@ fn prove_chain_transition(
             );
             result
         }
-        BenchmarkType::ProveLocal | BenchmarkType::ProveNetwork => {
+        BenchmarkType::ProveCPU | BenchmarkType::ProveCUDA | BenchmarkType::ProveNetwork => {
             prover_client
-                .prove(&proving_key, stdin)
+                .prove(&proving_key, &stdin)
                 .groth16()
                 .run()
                 .unwrap();
@@ -391,7 +385,7 @@ fn prove_chain_transition(
 async fn prove_bch_overwrite(
     n: usize,
     benchmark_type: BenchmarkType,
-    prover_client: &ProverClient,
+    prover_client: &EnvProver,
     proving_key: &SP1ProvingKey,
 ) -> BenchmarkResult {
     // 1) Build the chain (and client MMR) up to block 478558
@@ -413,9 +407,10 @@ async fn main() {
     let args = Args::parse();
     let benchmark_type = match args.r#type.to_lowercase().as_str() {
         "execute" => BenchmarkType::Execute,
-        "prove-local" => BenchmarkType::ProveLocal,
+        "prove-cpu" => BenchmarkType::ProveCPU,
+        "prove-cuda" => BenchmarkType::ProveCUDA,
         "prove-network" => BenchmarkType::ProveNetwork,
-        _ => panic!("Invalid benchmark type. Must be 'execute', 'prove-local', or 'prove-network'"),
+        _ => panic!("Invalid benchmark type. Must be 'execute', 'prove-cpu', 'prove-cuda', or 'prove-network'"),
     };
 
     let mut table = Table::new();
@@ -426,8 +421,11 @@ async fn main() {
     }
 
     match benchmark_type {
-        BenchmarkType::ProveLocal => {
-            std::env::set_var("SP1_PROVER", "local");
+        BenchmarkType::ProveCPU => {
+            std::env::set_var("SP1_PROVER", "cpu");
+        }
+        BenchmarkType::ProveCUDA => {
+            std::env::set_var("SP1_PROVER", "cuda");
         }
         BenchmarkType::ProveNetwork => {
             std::env::set_var("SP1_PROVER", "network");
@@ -437,7 +435,7 @@ async fn main() {
         }
     }
 
-    let prover_client = ProverClient::new();
+    let prover_client = ProverClient::from_env();
     let (pk, _vk) = prover_client.setup(RIFT_PROGRAM_ELF);
 
     for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
