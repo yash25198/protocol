@@ -236,13 +236,9 @@ contract RiftExchange is BitcoinLightClient {
         uint256 swapIndex,
         bytes32 swapBitcoinBlockHash,
         bytes32 swapBitcoinTxid,
-        uint8 confirmationBlocks, // default should be 2 for most users aka 1 additional block
-        Types.DepositVault[] calldata vaults,
-        address specifiedPayoutAddress,
+        Types.DepositVault calldata vault,
         bytes32 priorMmrRoot,
         bytes32 newMmrRoot,
-        uint256 totalSwapFee,
-        uint256 totalSwapOutput,
         bytes calldata proof,
         bytes calldata compressedBlockLeaves,
         Types.BlockLeaf calldata tipBlockLeaf,
@@ -250,16 +246,13 @@ contract RiftExchange is BitcoinLightClient {
         bytes32[] calldata tipBlockPeaks
     ) internal returns (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) {
         // [0] Validate various parameters align with what requested makers have set (this could be done in circuit)
-        uint64 oldestDepositorAttestedBitcoinBlockHeight = VaultLib.getOldestAttestedBitcoinBlockHeightFromVaults(
-            vaults
-        );
-        VaultLib.validateConfirmationBlocksIsSufficient(vaults, confirmationBlocks);
-        VaultLib.validatePayoutAddressIsSameForAllVaults(vaults, specifiedPayoutAddress);
-        VaultLib.validateSwapTotals(vaults, totalSwapFee, totalSwapOutput);
+        uint64 oldestDepositorAttestedBitcoinBlockHeight = vault.attestedBitcoinBlockHeight;
+
+        (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vault);
 
         // [1] create deposit vault commitment, while doing so validate that the vaults hash to
         // their commitments
-        bytes32 aggregateVaultCommitment = VaultLib.validateDepositVaultCommitments(vaults, vaultCommitments);
+        bytes32 aggregateVaultCommitment = VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
 
         // [2] create compressed leaves commitment
         bytes32 compressedLeavesCommitment = EfficientHashLib.hash(compressedBlockLeaves);
@@ -267,11 +260,11 @@ contract RiftExchange is BitcoinLightClient {
         // [3] craft public inputs and verify proof
         bytes memory publicInputs = abi.encode(
             Types.SwapProofPublicInputs({
-                confirmationBlocks: confirmationBlocks,
+                confirmationBlocks: vault.confirmationBlocks,
                 swapBitcoinBlockHash: swapBitcoinBlockHash,
                 swapBitcoinTxid: swapBitcoinTxid,
                 aggregateVaultCommitment: aggregateVaultCommitment,
-                specifiedPayoutAddress: specifiedPayoutAddress,
+                specifiedPayoutAddress: vault.specifiedPayoutAddress,
                 totalSwapFee: totalSwapFee,
                 totalSwapOutput: totalSwapOutput,
                 previousMmrRoot: priorMmrRoot,
@@ -294,11 +287,11 @@ contract RiftExchange is BitcoinLightClient {
             swapIndex: swapIndex,
             aggregateVaultCommitment: aggregateVaultCommitment,
             swapBitcoinBlockHash: swapBitcoinBlockHash,
-            confirmationBlocks: confirmationBlocks,
+            confirmationBlocks: vault.confirmationBlocks,
             liquidityUnlockTimestamp: uint64(
                 block.timestamp + RiftUtils.calculateChallengePeriod(attestedBitcoinBlockHeightDelta)
             ),
-            specifiedPayoutAddress: specifiedPayoutAddress,
+            specifiedPayoutAddress: vault.specifiedPayoutAddress,
             totalSwapFee: totalSwapFee,
             totalSwapOutput: totalSwapOutput,
             state: Types.SwapState.Proved
@@ -310,8 +303,7 @@ contract RiftExchange is BitcoinLightClient {
     /// @notice Submits a new swap proof and adds it to swapCommitments
     /// @param swapBitcoinTxid Txid of the Bitcoin transaction containing the swap
     /// @param swapBitcoinBlockHash Hash of the Bitcoin block containing the swap
-    /// @param vaults Array of deposit vaults being used in the swap
-    /// @param specifiedPayoutAddress Address to receive the swap proceeds
+    /// @param vault Deposit vault being used in the swap
     /// @param priorMmrRoot Previous MMR root used to generate this swap proof
     /// @param newMmrRoot Updated MMR root at least incluing up to the confirmation block
     /// @param proof ZK proof validating the swap
@@ -319,13 +311,9 @@ contract RiftExchange is BitcoinLightClient {
     function submitSwapProof(
         bytes32 swapBitcoinTxid,
         bytes32 swapBitcoinBlockHash,
-        Types.DepositVault[] calldata vaults,
-        address specifiedPayoutAddress,
+        Types.DepositVault calldata vault,
         bytes32 priorMmrRoot,
         bytes32 newMmrRoot,
-        uint8 confirmationBlocks,
-        uint256 totalSwapFee,
-        uint256 totalSwapOutput,
         bytes calldata proof,
         bytes calldata compressedBlockLeaves,
         Types.BlockLeaf calldata tipBlockLeaf,
@@ -337,13 +325,9 @@ contract RiftExchange is BitcoinLightClient {
             swapCommitments.length,
             swapBitcoinBlockHash,
             swapBitcoinTxid,
-            confirmationBlocks,
-            vaults,
-            specifiedPayoutAddress,
+            vault,
             priorMmrRoot,
             newMmrRoot,
-            totalSwapFee,
-            totalSwapOutput,
             proof,
             compressedBlockLeaves,
             tipBlockLeaf,
@@ -362,13 +346,9 @@ contract RiftExchange is BitcoinLightClient {
     function submitSwapProofWithOverwrite(
         bytes32 swapBitcoinBlockHash,
         bytes32 swapBitcoinTxid,
-        uint8 confirmationBlocks,
-        Types.DepositVault[] calldata vaults,
-        address specifiedPayoutAddress,
+        Types.DepositVault calldata vault,
         bytes32 priorMmrRoot,
         bytes32 newMmrRoot,
-        uint256 totalSwapFee,
-        uint256 totalSwapOutput,
         bytes calldata proof,
         bytes calldata compressedBlockLeaves,
         Types.BlockLeaf calldata tipBlockLeaf,
@@ -385,13 +365,9 @@ contract RiftExchange is BitcoinLightClient {
             overwriteSwap.swapIndex,
             swapBitcoinBlockHash,
             swapBitcoinTxid,
-            confirmationBlocks,
-            vaults,
-            specifiedPayoutAddress,
+            vault,
             priorMmrRoot,
             newMmrRoot,
-            totalSwapFee,
-            totalSwapOutput,
             proof,
             compressedBlockLeaves,
             tipBlockLeaf,
@@ -413,7 +389,7 @@ contract RiftExchange is BitcoinLightClient {
         Types.BlockLeaf calldata bitcoinConfirmationBlockLeaf,
         bytes32[] calldata bitcoinConfirmationBlockSiblings,
         bytes32[] calldata bitcoinConfirmationBlockPeaks,
-        Types.DepositVault[] calldata utilizedVaults,
+        Types.DepositVault calldata utilizedVault,
         uint32 tipBlockHeight
     ) public {
         // [0] validate swaps exists
@@ -454,22 +430,16 @@ contract RiftExchange is BitcoinLightClient {
             revert Errors.InvalidConfirmationBlockDelta();
 
         // [6] ensure all utilized vaults hash to the aggregate vault commitment
-        bytes32 aggregateVaultCommitmentHash = VaultLib.validateDepositVaultCommitments(
-            utilizedVaults,
-            vaultCommitments
-        );
+        bytes32 aggregateVaultCommitmentHash = VaultLib.validateDepositVaultCommitment(utilizedVault, vaultCommitments);
         // [7] the aggregate vault commitment must be the same as when it was originally created
         if (aggregateVaultCommitmentHash != swap.aggregateVaultCommitment) revert Errors.InvalidVaultCommitment();
 
-        // [8] empty deposit amounts for all associated deposit vaults
-        for (uint256 i = 0; i < utilizedVaults.length; i++) {
-            Types.DepositVault memory updatedVault = utilizedVaults[i];
-            updatedVault.depositAmount = 0;
-            updatedVault.depositFee = 0;
-            vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
-            // TODO: Refactor to emit a single event for n vaults
-            emit Events.VaultUpdated(updatedVault);
-        }
+        // [8] empty deposit amount for utilized vault
+        Types.DepositVault memory updatedVault = utilizedVault;
+        updatedVault.depositAmount = 0;
+        updatedVault.depositFee = 0;
+        vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
+        emit Events.VaultUpdated(updatedVault);
 
         // [9] update completed swap hash
         Types.ProposedSwap memory updatedSwap = swap;
