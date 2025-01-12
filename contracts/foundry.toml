@@ -38,7 +38,7 @@ ffi = true
 ast = true
 build_info = true
 extra_output = ["storageLayout"]
-solc = "0.8.27"
+solc = "0.8.28"
 env = { PRIVATE_KEY = "${PRIVATE_KEY}" }
 src = "src"
 test = "tests"

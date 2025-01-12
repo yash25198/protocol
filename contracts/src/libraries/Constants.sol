@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Unlicensed
-pragma solidity ^0.8.27;
+pragma solidity =0.8.28;
 
 library Constants {
+    // TODO: Deposit lock up should be aware of what the challenge period could be?
     uint16 public constant DEPOSIT_LOCKUP_PERIOD = 8 hours;
     uint64 public constant MIN_OUTPUT_SATS = 1000; // to prevent dust errors
     uint32 public constant MIN_DEPOSIT_AMOUNT = (10e3 / PROTOCOL_FEE_BP) + 1;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Unlicensed
-pragma solidity ^0.8.27;
+pragma solidity =0.8.28;
 
 import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
