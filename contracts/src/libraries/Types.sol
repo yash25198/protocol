@@ -39,6 +39,7 @@ library Types {
     struct ProposedSwap {
         uint256 swapIndex;
         bytes32 aggregateVaultCommitment;
+        bytes32 depositVaultNonce;
         bytes32 swapBitcoinBlockHash;
         // number of Bitcoin block confirmations required after the swap transaction
         // (e.g., 1 = only the block containing the swap, 2 = swap block + 1 confirmation, etc.)
@@ -65,6 +66,17 @@ library Types {
         bytes32 previousMmrRoot;
         bytes32 newMmrRoot;
         bytes32 compressedLeavesCommitment;
+    }
+
+    enum VaultUpdateContext {
+        Created,
+        Withdraw,
+        Release
+    }
+
+    enum SwapUpdateContext {
+        Created,
+        Complete
     }
 
     struct MMRProof {

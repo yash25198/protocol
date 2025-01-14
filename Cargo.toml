@@ -2,8 +2,9 @@
 members = [
   "bin/benchmark-light-client",
   "bin/devnet",
-  # "bin/data-engine",
+  "bin/data-engine-server",
   # "bin/hypernode",
+  "crates/data-engine",
   "crates/bitcoin-light-client-core",
   "crates/rift-sdk",
   "crates/rift-core", 
@@ -20,13 +21,14 @@ edition = "2021"
 rust-version = "1.81"
 exclude = [".github/"]
 
+
 [workspace.dependencies]
 # Internal dependencies
 bitcoin-light-client-core = { path = "crates/bitcoin-light-client-core" }
 rift-core = { path = "crates/rift-core" }
 rift-sdk = { path = "crates/rift-sdk" }
 rift-program = {path = "crates/rift-program"}
-data-engine = { path = "bin/data-engine" }
+data-engine = { path = "crates/data-engine" }
 devnet = {path = "bin/devnet"}
 test-data-utils = { path = "test-data" }
 
@@ -45,18 +47,24 @@ secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patc
 
 bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1", default-features = false}
 bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"}
-accumulators = { version = "0.4", features = ["all"] }
+# accumulators = { version = "0.4", features = ["memory"], default-features = false }
+accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "a593aa486e8612a5b60c8d0a6fbc17dd1abbe1d7", features = ["all"] }
 bincode = "1.3"
 clap = { version = "4.0", features = ["derive", "env"] }
 hex = "0.4.3"
 once_cell = "1.18"
 prettytable = "0.10"
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "json"] }
 serde = { version = "1.0.200", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 thiserror = "1.0.63"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+
+tokio-rusqlite = { version = "0.6.0", features = ["bundled"] }
+axum = { version = "0.7", features = ["json"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
 
 alloy-sol-types = { version = "0.8.0", features = ["json"] }
 alloy = { version = "0.8.0", features = ["full", "node-bindings", "json"] }
@@ -71,7 +79,9 @@ futures = "0.3.30"
 futures-util = "0.3.30"
 backoff = { version = "0.4.0", features=["tokio"] }
 
+
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0-rc.3" }
 sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0-rc.3" }
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0-rc.3" }
+

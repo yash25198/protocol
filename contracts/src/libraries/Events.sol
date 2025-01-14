@@ -4,6 +4,6 @@ import {Types} from "./Types.sol";
 
 library Events {
     event BlockTreeUpdated(bytes32 treeRoot);
-    event VaultUpdated(Types.DepositVault vault);
-    event SwapUpdated(Types.ProposedSwap swap);
+    event VaultUpdated(Types.DepositVault vault, Types.VaultUpdateContext context);
+    event SwapUpdated(Types.ProposedSwap swap, Types.SwapUpdateContext context);
 }

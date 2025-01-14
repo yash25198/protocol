@@ -195,7 +195,7 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Completes deposit by emitting event and transferring tokens
     function _finalizeDeposit(Types.DepositVault memory vault) internal {
-        emit Events.VaultUpdated(vault);
+        emit Events.VaultUpdated(vault, Types.VaultUpdateContext.Created);
         if (!DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee))
             revert Errors.TransferFailed();
     }
@@ -226,7 +226,7 @@ contract RiftExchange is BitcoinLightClient {
             revert Errors.TransferFailed();
         }
 
-        emit Events.VaultUpdated(updatedVault);
+        emit Events.VaultUpdated(updatedVault, Types.VaultUpdateContext.Withdraw);
     }
 
     /// @notice Internal function to prepare and validate a new swap
@@ -294,7 +294,8 @@ contract RiftExchange is BitcoinLightClient {
             specifiedPayoutAddress: vault.specifiedPayoutAddress,
             totalSwapFee: totalSwapFee,
             totalSwapOutput: totalSwapOutput,
-            state: Types.SwapState.Proved
+            state: Types.SwapState.Proved,
+            depositVaultNonce: vault.nonce
         });
 
         updatedSwapHash = VaultLib.hashSwap(swap);
@@ -337,7 +338,7 @@ contract RiftExchange is BitcoinLightClient {
 
         // [1] update swap commitments with updated swap hash
         swapCommitments.push(updatedSwapHash);
-        emit Events.SwapUpdated(swap);
+        emit Events.SwapUpdated(swap, Types.SwapUpdateContext.Created);
     }
 
     /// @notice Same as submitSwapProof but overwrites an existing completed swap commitment
@@ -377,7 +378,7 @@ contract RiftExchange is BitcoinLightClient {
 
         // [2] update swap commitments with updated swap hash
         swapCommitments[overwriteSwap.swapIndex] = updatedSwapHash;
-        emit Events.SwapUpdated(swap);
+        emit Events.SwapUpdated(swap, Types.SwapUpdateContext.Created);
     }
 
     function releaseLiquidity(
@@ -439,7 +440,7 @@ contract RiftExchange is BitcoinLightClient {
         updatedVault.depositAmount = 0;
         updatedVault.depositFee = 0;
         vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
-        emit Events.VaultUpdated(updatedVault);
+        emit Events.VaultUpdated(updatedVault, Types.VaultUpdateContext.Release);
 
         // [9] update completed swap hash
         Types.ProposedSwap memory updatedSwap = swap;
@@ -451,7 +452,7 @@ contract RiftExchange is BitcoinLightClient {
         accumulatedFeeBalance += swap.totalSwapFee;
 
         // [11] emit swap updated
-        emit Events.SwapUpdated(updatedSwap);
+        emit Events.SwapUpdated(updatedSwap, Types.SwapUpdateContext.Complete);
 
         // [12] release funds to buyers ETH payout address
         // TODO: Use a safe erc20 transfer library
