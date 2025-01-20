@@ -47,8 +47,7 @@ secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patc
 
 bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1", default-features = false}
 bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"}
-# accumulators = { version = "0.4", features = ["memory"], default-features = false }
-accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "a593aa486e8612a5b60c8d0a6fbc17dd1abbe1d7", features = ["all"] }
+accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "3b2c846edee5db7917fc4a0f548d28658f559355", features = ["all"] }
 bincode = "1.3"
 clap = { version = "4.0", features = ["derive", "env"] }
 hex = "0.4.3"
@@ -64,7 +63,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio-rusqlite = { version = "0.6.0", features = ["bundled"] }
 axum = { version = "0.7", features = ["json"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-
+tempfile = { version = "3.6.0" }
 
 alloy-sol-types = { version = "0.8.0", features = ["json"] }
 alloy = { version = "0.8.0", features = ["full", "node-bindings", "json"] }

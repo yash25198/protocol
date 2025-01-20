@@ -249,7 +249,7 @@ pub mod tests {
         format!("0x{}", hex::encode(digest))
     }
 
-    pub fn client_mmr_proof_to_minimal_mmr_proof(proof: &ClientMMRProof) -> MMRProof {
+    pub fn client_mmr_proof_to_circuit_mmr_proof(proof: &ClientMMRProof) -> MMRProof {
         println!("Proof: {:?}", proof);
         MMRProof {
             siblings: proof
@@ -351,7 +351,7 @@ pub mod tests {
             println!("Getting proof for index: {}", index);
             let proof = client_mmr.get_proof(index, None).await.unwrap();
 
-            let minimal_proof = client_mmr_proof_to_minimal_mmr_proof(&proof);
+            let minimal_proof = client_mmr_proof_to_circuit_mmr_proof(&proof);
             println!("Minimal proof: {:?}", minimal_proof);
 
             // Now instantiate the proof MMR and then verify a proof based on that
@@ -379,7 +379,7 @@ pub mod tests {
             .get_proof(index.element_index, None)
             .await
             .unwrap();
-        let minimal_proof = client_mmr_proof_to_minimal_mmr_proof(&proof);
+        let minimal_proof = client_mmr_proof_to_circuit_mmr_proof(&proof);
 
         println!("Single leaf proof: {:?}", minimal_proof);
 
@@ -410,7 +410,7 @@ pub mod tests {
         // Verify proof for each leaf
         for &idx in &indices {
             let proof = client_mmr.get_proof(idx, None).await.unwrap();
-            let minimal_proof = client_mmr_proof_to_minimal_mmr_proof(&proof);
+            let minimal_proof = client_mmr_proof_to_circuit_mmr_proof(&proof);
 
             println!("Minimal proof: {:?}", minimal_proof);
 
@@ -451,7 +451,7 @@ pub mod tests {
         // Verify first, middle, and last leaf
         for &idx in [indices[0], indices[500], indices[999]].iter() {
             let proof = client_mmr.get_proof(idx, None).await.unwrap();
-            let minimal_proof = client_mmr_proof_to_minimal_mmr_proof(&proof);
+            let minimal_proof = client_mmr_proof_to_circuit_mmr_proof(&proof);
 
             let circuit_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::from_peaks(
                 &minimal_proof.peaks,

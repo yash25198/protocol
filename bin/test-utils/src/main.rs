@@ -11,15 +11,13 @@ use alloy::{
 use bitcoin_light_client_core::{
     hasher::{Digest, Hasher},
     leaves::BlockLeaf,
-    mmr::{verify_mmr_proof, CompactMerkleMountainRange},
+    mmr::verify_mmr_proof,
 };
 use clap::{Parser, Subcommand};
 
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
-use rift_sdk::mmr::{
-    client_mmr_proof_to_minimal_mmr_proof, client_mmr_to_root, create_keccak256_client_mmr,
-    digest_to_hex,
-};
+use rift_sdk::mmr::{client_mmr_proof_to_circuit_mmr_proof, client_mmr_to_root, digest_to_hex};
+use rift_sdk::{mmr::IndexedMMR, DatabaseLocation};
 
 const BLOCK_HASH_SEED: [u8; 32] =
     hex!("ceeca7c42d523ea6b5183e5922b966e85d1dab847b051e18ffd3611763726626");
@@ -77,7 +75,10 @@ fn mock_chainwork_for_height(height: u32) -> U256 {
 /// Generates a fake MMR proof for the block at `height`, using an MMR built from block 0..=height.
 async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
     let block_hashes = generate_block_hashes(height);
-    let mut client_mmr = create_keccak256_client_mmr();
+    let mmr_db_location = DatabaseLocation::InMemory;
+    let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(mmr_db_location)
+        .await
+        .unwrap();
 
     // Create and append MMR leaves (blocks 0..=height)
     for (i, hash) in block_hashes.iter().enumerate() {
@@ -86,8 +87,7 @@ async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
             i as u32,
             mock_chainwork_for_height(i as u32).to_be_bytes(),
         );
-        let leaf_hash = leaf.hash::<Keccak256Hasher>();
-        client_mmr.append(digest_to_hex(&leaf_hash)).await.unwrap();
+        indexed_mmr.append(&leaf).await.unwrap();
     }
 
     // Prepare the block leaf for the final block at `height`
@@ -99,32 +99,34 @@ async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
 
     // Get a proof for the leaf at `height`
     let tip_element_index = map_leaf_index_to_element_index(height as usize);
-    let proof = client_mmr.get_proof(tip_element_index, None).await.unwrap();
-    let minimal_proof = client_mmr_proof_to_minimal_mmr_proof(&proof);
+    let circuit_proof = indexed_mmr
+        .get_circuit_proof(tip_element_index, None)
+        .await
+        .unwrap();
 
     // MMR root
-    let root_hash = client_mmr_to_root::<Keccak256Hasher>(&client_mmr).await;
+    let root_hash = indexed_mmr.get_root().await.unwrap();
 
     if debug {
-        println!("proof: {:?}", proof);
+        println!("proof: {:?}", circuit_proof);
         println!("root_hash: {}", hex::encode(root_hash));
     }
 
     // Optional debug check: verify the proof
     if debug {
         assert!(
-            verify_mmr_proof::<Keccak256Hasher>(&root_hash, &minimal_proof),
+            verify_mmr_proof::<Keccak256Hasher>(&root_hash, &circuit_proof),
             "MMR proof verification failed"
         );
     }
 
     // Convert to Solidity-friendly ABI-encoded proof
-    let siblings: Vec<FixedBytes<32>> = minimal_proof
+    let siblings: Vec<FixedBytes<32>> = circuit_proof
         .siblings
         .iter()
         .map(|s| s.into())
         .collect::<Vec<_>>();
-    let peaks: Vec<FixedBytes<32>> = minimal_proof
+    let peaks: Vec<FixedBytes<32>> = circuit_proof
         .peaks
         .iter()
         .map(|s| s.into())
@@ -155,7 +157,9 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
 ) {
     let tip_height = height + confirmations;
     let block_hashes = generate_block_hashes(tip_height);
-    let mut client_mmr = create_keccak256_client_mmr();
+    let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::InMemory)
+        .await
+        .unwrap();
 
     // Create and append MMR leaves (blocks 0..=tip_height)
     for (i, hash) in block_hashes.iter().enumerate() {
@@ -164,8 +168,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
             i as u32,
             mock_chainwork_for_height(i as u32).to_be_bytes(),
         );
-        let leaf_hash = leaf.hash::<Keccak256Hasher>();
-        client_mmr.append(digest_to_hex(&leaf_hash)).await.unwrap();
+        indexed_mmr.append(&leaf).await.unwrap();
     }
 
     // 1) Get proof for the block at `height`
@@ -175,8 +178,10 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         cumulativeChainwork: mock_chainwork_for_height(height),
     };
     let element_index = map_leaf_index_to_element_index(height as usize);
-    let proof = client_mmr.get_proof(element_index, None).await.unwrap();
-    let minimal_proof = client_mmr_proof_to_minimal_mmr_proof(&proof);
+    let proof = indexed_mmr
+        .get_circuit_proof(element_index, None)
+        .await
+        .unwrap();
 
     // 2) Also get a proof for the *tip* block at `tip_height`
     let tip_block_leaf = rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf {
@@ -185,11 +190,13 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         cumulativeChainwork: mock_chainwork_for_height(tip_height),
     };
     let tip_element_index = map_leaf_index_to_element_index(tip_height as usize);
-    let tip_proof = client_mmr.get_proof(tip_element_index, None).await.unwrap();
-    let minimal_tip_proof = client_mmr_proof_to_minimal_mmr_proof(&tip_proof);
+    let tip_proof = indexed_mmr
+        .get_circuit_proof(tip_element_index, None)
+        .await
+        .unwrap();
 
     // The MMR root for the entire chain up to the tip
-    let root_hash = client_mmr_to_root::<Keccak256Hasher>(&client_mmr).await;
+    let root_hash = indexed_mmr.get_root().await.unwrap();
 
     if debug {
         println!("Using tip_height: {}", tip_height);
@@ -201,11 +208,11 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
     // Optional debug checks: verify both proofs
     if debug {
         assert!(
-            verify_mmr_proof::<Keccak256Hasher>(&root_hash, &minimal_proof),
+            verify_mmr_proof::<Keccak256Hasher>(&root_hash, &proof),
             "MMR proof verification for block at `height` failed"
         );
         assert!(
-            verify_mmr_proof::<Keccak256Hasher>(&root_hash, &minimal_tip_proof),
+            verify_mmr_proof::<Keccak256Hasher>(&root_hash, &tip_proof),
             "MMR proof verification for tip block failed"
         );
     }
@@ -213,16 +220,8 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
     // Convert both to Solidity-friendly ABI-encoded proofs
 
     // 1) The block's proof
-    let siblings: Vec<FixedBytes<32>> = minimal_proof
-        .siblings
-        .iter()
-        .map(|s| s.into())
-        .collect::<Vec<_>>();
-    let peaks: Vec<FixedBytes<32>> = minimal_proof
-        .peaks
-        .iter()
-        .map(|s| s.into())
-        .collect::<Vec<_>>();
+    let siblings: Vec<FixedBytes<32>> = proof.siblings.iter().map(|s| s.into()).collect::<Vec<_>>();
+    let peaks: Vec<FixedBytes<32>> = proof.peaks.iter().map(|s| s.into()).collect::<Vec<_>>();
     let leaf_count = tip_height + 1;
     let root_hash_fixed: FixedBytes<32> = root_hash.into();
     let sol_mmr_proof = rift_sdk::bindings::non_artifacted_types::Types::MMRProof {
@@ -234,16 +233,13 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
     };
 
     // 2) The tip block's proof
-    let tip_siblings: Vec<FixedBytes<32>> = minimal_tip_proof
+    let tip_siblings: Vec<FixedBytes<32>> = tip_proof
         .siblings
         .iter()
         .map(|s| s.into())
         .collect::<Vec<_>>();
-    let tip_peaks: Vec<FixedBytes<32>> = minimal_tip_proof
-        .peaks
-        .iter()
-        .map(|s| s.into())
-        .collect::<Vec<_>>();
+    let tip_peaks: Vec<FixedBytes<32>> =
+        tip_proof.peaks.iter().map(|s| s.into()).collect::<Vec<_>>();
     let tip_sol_mmr_proof = rift_sdk::bindings::non_artifacted_types::Types::MMRProof {
         blockLeaf: tip_block_leaf,
         siblings: tip_siblings,

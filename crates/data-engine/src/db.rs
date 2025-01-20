@@ -7,24 +7,6 @@ use rift_sdk::bindings::Types::{DepositVault, ProposedSwap};
 use std::str::FromStr;
 use tokio_rusqlite::{params, Connection};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Where to store the database (in-memory or on disk).
-pub enum DatabaseLocation {
-    InMemory,
-    File(String),
-}
-
-impl FromStr for DatabaseLocation {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "memory" => Ok(DatabaseLocation::InMemory),
-            s => Ok(DatabaseLocation::File(s.to_string())),
-        }
-    }
-}
-
 /// Run initial table creation / migrations on an existing `tokio_sqlite::Connection`.
 pub async fn setup_database(conn: &Connection) -> Result<()> {
     let schema = r#"

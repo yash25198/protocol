@@ -15,9 +15,11 @@ impl DigestZero for Digest {
 
 pub trait Hasher {
     fn hash(data: &[u8]) -> Digest;
+    fn name() -> &'static str;
 }
 
 /// Sha256 implementation
+#[derive(Debug)]
 pub struct Sha256Hasher;
 
 impl Hasher for Sha256Hasher {
@@ -27,9 +29,14 @@ impl Hasher for Sha256Hasher {
         let result = hasher.finalize();
         result.into()
     }
+
+    fn name() -> &'static str {
+        "sha256"
+    }
 }
 
 /// Keccak256 implementation
+#[derive(Debug)]
 pub struct Keccak256Hasher;
 
 impl Hasher for Keccak256Hasher {
@@ -39,5 +46,9 @@ impl Hasher for Keccak256Hasher {
         let mut result = [0u8; 32];
         hasher.finalize(&mut result);
         result
+    }
+
+    fn name() -> &'static str {
+        "keccak256"
     }
 }

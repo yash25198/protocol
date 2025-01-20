@@ -9,10 +9,8 @@ use std::time::Instant;
 
 use clap::Parser;
 use prettytable::{row, Table};
-use rift_sdk::{
-    mmr::{client_mmr_proof_to_minimal_mmr_proof, create_keccak256_client_mmr, digest_to_hex},
-    RIFT_PROGRAM_ELF,
-};
+use rift_sdk::DatabaseLocation;
+use rift_sdk::{mmr::digest_to_hex, mmr::IndexedMMR, RIFT_PROGRAM_ELF};
 
 use tokio::runtime::Runtime;
 
@@ -76,7 +74,7 @@ struct Args {
 /// plus metadata about the chain at block #478558.
 struct BchOverwriteMMRState {
     circuit_mmr: CompactMerkleMountainRange<Keccak256Hasher>,
-    client_mmr: ClientMMR, // used to fetch real proofs
+    indexed_mmr: IndexedMMR<Keccak256Hasher>, // used to fetch real proofs
 
     /// Mapping height -> element_index in the client MMR
     height_to_index: HashMap<u32, usize>,
@@ -111,11 +109,10 @@ impl BchOverwriteMMRState {
         let mut circuit_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::new();
         circuit_mmr.append(&genesis_leaf_hash);
 
-        let mut client_mmr = create_keccak256_client_mmr();
-        let append_result = client_mmr
-            .append(digest_to_hex(&genesis_leaf_hash))
+        let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::InMemory)
             .await
             .unwrap();
+        let append_result = indexed_mmr.append(&genesis_leaf).await.unwrap();
         let mut height_to_index = HashMap::new();
         height_to_index.insert(genesis_leaf.height, append_result.element_index);
 
@@ -133,8 +130,8 @@ impl BchOverwriteMMRState {
             let leaf_hash = leaf.hash::<Keccak256Hasher>();
             circuit_mmr.append(&leaf_hash);
 
-            let result = client_mmr
-                .append(digest_to_hex(&leaf_hash))
+            let result = indexed_mmr
+                .append(leaf)
                 .await
                 .expect("Failed to append leaf to client MMR");
             height_to_index.insert(leaf.height, result.element_index);
@@ -172,7 +169,7 @@ impl BchOverwriteMMRState {
         );
         Self {
             circuit_mmr,
-            client_mmr,
+            indexed_mmr,
             height_to_index,
             parent_header,
             parent_leaf,
@@ -209,11 +206,7 @@ async fn extend_with_bch_blocks(
     for leaf in bch_leaves.iter() {
         let leaf_hash = leaf.hash::<Keccak256Hasher>();
         state.circuit_mmr.append(&leaf_hash);
-        let res = state
-            .client_mmr
-            .append(digest_to_hex(&leaf_hash))
-            .await
-            .unwrap();
+        let res = state.indexed_mmr.append(leaf).await.unwrap();
         state.height_to_index.insert(leaf.height, res.element_index);
     }
 
@@ -226,12 +219,11 @@ async fn extend_with_bch_blocks(
         .unwrap();
 
     // real mmr proof
-    let proof = state
-        .client_mmr
-        .get_proof(previous_tip_element_index, None)
+    let previous_tip_proof = state
+        .indexed_mmr
+        .get_circuit_proof(previous_tip_element_index, None)
         .await
         .unwrap();
-    let previous_tip_proof = client_mmr_proof_to_minimal_mmr_proof(&proof);
 
     println!("Chain extended in {}", format_duration(start.elapsed()));
     (
@@ -262,20 +254,17 @@ async fn create_bch_overwrite_chain_transition(
 
     // 3) We now fetch real proofs for the parent and parent_retarget as well
     //    (they were set in BchOverwriteMMRState).
-    let parent_proof_raw = state
-        .client_mmr
-        .get_proof(state.parent_element_index, None)
+    let parent_inclusion_proof = state
+        .indexed_mmr
+        .get_circuit_proof(state.parent_element_index, None)
         .await
         .unwrap();
-    let parent_inclusion_proof = client_mmr_proof_to_minimal_mmr_proof(&parent_proof_raw);
 
-    let parent_retarget_proof_raw = state
-        .client_mmr
-        .get_proof(state.parent_retarget_element_index, None)
+    let parent_retarget_inclusion_proof = state
+        .indexed_mmr
+        .get_circuit_proof(state.parent_retarget_element_index, None)
         .await
         .unwrap();
-    let parent_retarget_inclusion_proof =
-        client_mmr_proof_to_minimal_mmr_proof(&parent_retarget_proof_raw);
 
     // 4) The previous MMR root is the chain after we appended n BCH blocks
     let previous_mmr_root = state.circuit_mmr.get_root();

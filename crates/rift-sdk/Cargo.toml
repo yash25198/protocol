@@ -15,6 +15,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 crypto-bigint = { workspace = true }
 sp1-sdk = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [build-dependencies]
 sp1-build = {workspace = true} 

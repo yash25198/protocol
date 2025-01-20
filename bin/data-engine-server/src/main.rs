@@ -1,10 +1,10 @@
 use axum::{extract::State, routing::get, Json, Router};
 use clap::Parser;
 use data_engine::db::setup_database;
-use data_engine::db::DatabaseLocation;
 use data_engine::engine::listen_for_events;
 use data_engine::models::OTCSwap;
 use eyre::Result;
+use rift_sdk::DatabaseLocation;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_rusqlite::Connection;
@@ -102,4 +102,8 @@ async fn get_user_swaps(State(conn): State<Arc<Connection>>) -> Json<Vec<OTCSwap
     // TODO: Implement your logic to fetch OTCSwaps from the DB.
     // For now, just returning an empty Vec:
     Json(vec![])
+}
+
+async fn get_tip_proof(State(conn): State<Arc<Connection>>) -> Json<Vec<u8>> {
+    todo!()
 }

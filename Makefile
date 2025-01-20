@@ -1,6 +1,6 @@
 sync:
 	cd contracts && forge build  && ./sync-artifacts.sh
-	cargo build --release --bin data-engine
+	cargo build --release
 
 test-contracts: sync
 	cd contracts && forge test

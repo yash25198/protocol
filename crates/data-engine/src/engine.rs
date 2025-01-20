@@ -63,6 +63,8 @@ pub async fn listen_for_events(
     let rift_exchange_address = Address::from_str(rift_exchange_address)?;
     let filter = Filter::new()
         .address(rift_exchange_address)
+        // TODO: Grab the latest block analyzed in the db, put that here
+        // TODO: Consider how the add-to-db functions will behave if sent duplicate entries
         .from_block(BlockNumberOrTag::Number(deploy_block_number));
 
     let sub = provider.subscribe_logs(&filter).await?;

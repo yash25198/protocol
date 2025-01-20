@@ -340,7 +340,7 @@ mod tests {
     use hasher::Keccak256Hasher;
     use leaves::get_genesis_leaf;
     use mmr::tests::{
-        client_mmr_proof_to_minimal_mmr_proof, create_keccak256_client_mmr, digest_to_hex,
+        client_mmr_proof_to_circuit_mmr_proof, create_keccak256_client_mmr, digest_to_hex,
     };
     use mmr::CompactMerkleMountainRange;
     use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS, TEST_HEADERS};
@@ -478,7 +478,7 @@ mod tests {
             BlockPosition {
                 header: genesis_header,
                 leaf: genesis_leaf,
-                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(
+                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(
                     &client_mmr
                         .get_proof(genesis_client_index, None)
                         .await
@@ -488,7 +488,7 @@ mod tests {
             BlockPosition {
                 header: genesis_header,
                 leaf: genesis_leaf,
-                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(
+                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(
                     &client_mmr
                         .get_proof(genesis_client_index, None)
                         .await
@@ -498,7 +498,7 @@ mod tests {
             BlockPosition {
                 header: genesis_header,
                 leaf: genesis_leaf,
-                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(
+                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(
                     &client_mmr
                         .get_proof(genesis_client_index, None)
                         .await
@@ -634,17 +634,17 @@ mod tests {
             BlockPosition {
                 header: parent_header,
                 leaf: parent_leaf,
-                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(&parent_leaf_proof),
+                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&parent_leaf_proof),
             },
             BlockPosition {
                 header: parent_retarget_header,
                 leaf: parent_retarget_leaf,
-                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(&parent_retarget_proof),
+                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof),
             },
             BlockPosition {
                 header: previous_tip_header,
                 leaf: previous_tip_leaf,
-                inclusion_proof: client_mmr_proof_to_minimal_mmr_proof(&previous_tip_leaf_proof),
+                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&previous_tip_leaf_proof),
             },
             pre_bch_peaks,
             bch_leaves
