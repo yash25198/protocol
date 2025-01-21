@@ -33,7 +33,7 @@ pub fn get_retarget_height_from_block_height(block_height: u64) -> u64 {
 /// Where to store the database (in-memory or on disk).
 pub enum DatabaseLocation {
     InMemory,
-    File(String),
+    Directory(String),
 }
 
 impl FromStr for DatabaseLocation {
@@ -42,7 +42,7 @@ impl FromStr for DatabaseLocation {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "memory" => Ok(DatabaseLocation::InMemory),
-            s => Ok(DatabaseLocation::File(s.to_string())),
+            s => Ok(DatabaseLocation::Directory(s.to_string())),
         }
     }
 }

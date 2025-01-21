@@ -1,12 +1,13 @@
 use std::convert::TryInto;
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use alloy::hex;
 use serde::{Deserialize, Serialize};
 
 use accumulators::mmr::{
-    element_index_to_leaf_index, elements_count_to_leaf_count, AppendResult,
+    self, element_index_to_leaf_index, elements_count_to_leaf_count, AppendResult,
     Proof as ClientMMRProof, ProofOptions, MMR as ClientMMR,
 };
 use accumulators::{
@@ -135,27 +136,6 @@ pub async fn client_mmr_to_root<H: LeafHasher>(client_mmr: &ClientMMR) -> Result
 }
 
 // -----------------------------------------------------------------------------
-// Utility to create a fresh accumulators MMR (with Keccak for the MMR's internal hashing).
-// You might or might not need this separately.
-// -----------------------------------------------------------------------------
-pub async fn initialize_client_mmr(db_location: DatabaseLocation) -> Result<ClientMMR> {
-    let store: Arc<dyn Store + Send + Sync> = match db_location {
-        DatabaseLocation::InMemory => Arc::new(InMemoryStore::default()),
-        DatabaseLocation::File(path) => {
-            let sqlite = SQLiteStore::new(&path, Some(true), None)
-                .await
-                .map_err(|e| RiftSdkError::StoreError(e.to_string()))?;
-            Arc::new(sqlite)
-        }
-    };
-
-    let hasher = Arc::new(AccumulatorsKeccakHasher::new());
-    // The accumulators MMR also needs a "prefix" for keys, e.g. Some("mmr")
-    let client_mmr = ClientMMR::new(store, hasher, Some("mmr".to_string()));
-    Ok(client_mmr)
-}
-
-// -----------------------------------------------------------------------------
 // ReverseIndex: a separate key prefix "revIndex:..." for (leaf_hash -> { index, data })
 // -----------------------------------------------------------------------------
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,15 +233,17 @@ pub struct IndexedMMR<H: LeafHasher> {
 impl<H: LeafHasher> IndexedMMR<H> {
     /// Single constructor: open or create the store, check or set hasherType, build the MMR + ReverseIndex.
     /// For simplicity, we store a string like "myLeafHasher" under "hasherType" in the DB.
-    pub async fn open(db_location: DatabaseLocation) -> Result<Self> {
+    pub async fn open(database_location: DatabaseLocation) -> Result<Self> {
         let hasher_name = H::name();
         // TODO: Unified hasher for circuit and client. For now: generic circuit hasher must be keccak256 to match the client
         assert_eq!(hasher_name, "keccak256");
         // 1) Create the underlying store
-        let store: Arc<dyn Store + Send + Sync> = match db_location {
+        let store: Arc<dyn Store + Send + Sync> = match database_location {
             DatabaseLocation::InMemory => Arc::new(InMemoryStore::default()),
-            DatabaseLocation::File(path) => {
-                let sqlite = SQLiteStore::new(&path, Some(true), None)
+            DatabaseLocation::Directory(path) => {
+                let mmr_db_path = PathBuf::from(path).join("mmr.db");
+                let mmr_db_path_str = mmr_db_path.to_str().expect("Invalid path");
+                let sqlite = SQLiteStore::new(mmr_db_path_str, Some(true), None)
                     .await
                     .map_err(|e| RiftSdkError::StoreError(e.to_string()))?;
                 Arc::new(sqlite)
@@ -465,14 +447,12 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_open_and_hasher_check() -> Result<()> {
         let tmp = tempdir().unwrap();
-        let db_path = tmp.path().join("test_mmr.db");
-        let db_path_str = db_path.to_string_lossy().to_string();
+        let tmp_path_str = tmp.path().to_str().unwrap().to_string();
+        let database_location = DatabaseLocation::Directory(tmp_path_str);
 
         // 1) First open => sets hasherType
         {
-            let mut mmr =
-                IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::File(db_path_str.clone()))
-                    .await?;
+            let mut mmr = IndexedMMR::<Keccak256Hasher>::open(database_location.clone()).await?;
 
             // append a leaf
             let leaf = BlockLeaf {
@@ -485,9 +465,7 @@ mod tests {
 
         // 2) Second open => same hasherType => OK
         {
-            let mmr2 =
-                IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::File(db_path_str.clone()))
-                    .await?;
+            let mmr2 = IndexedMMR::<Keccak256Hasher>::open(database_location.clone()).await?;
             assert_eq!(mmr2.leaf_hasher_name(), "keccak256");
         }
 
@@ -534,11 +512,8 @@ mod tests {
 
         // Create a temporary directory that will be automatically cleaned up
         let temp_dir = tempdir().unwrap();
-        let mmr_db_path = temp_dir.path().join("test_mmr.db");
-        println!("mmr_db_path: {}", mmr_db_path.to_str().unwrap());
-        let index_db_path = temp_dir.path().join("test_index.db");
-        println!("index_db_path: {}", index_db_path.to_str().unwrap());
-        let mmr_db_location = DatabaseLocation::File(mmr_db_path.to_str().unwrap().to_string());
+        let temp_dir_path_str = temp_dir.path().to_str().unwrap().to_string();
+        let mmr_db_location = DatabaseLocation::Directory(temp_dir_path_str);
 
         // Test data
         let test_leaf = BlockLeaf {
