@@ -1,14 +1,15 @@
+use alloy::primitives::Address;
 use axum::{extract::State, routing::get, Json, Router};
+use bitcoin_light_client_core::hasher::Digest;
+use bitcoin_light_client_core::leaves::BlockLeaf;
 use clap::Parser;
-use data_engine::db::setup_database;
-use data_engine::engine::listen_for_events;
+use data_engine::engine::DataEngine;
 use data_engine::models::OTCSwap;
 use eyre::Result;
-use rift_sdk::DatabaseLocation;
+use rift_sdk::{create_websocket_provider, DatabaseLocation};
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio_rusqlite::Connection;
-use tokio_util::task::TaskTracker;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -46,64 +47,77 @@ async fn main() -> Result<()> {
 
     // Parse CLI args
     let args = Args::parse();
+    let provider = create_websocket_provider(&args.evm_rpc_websocket_url).await?;
 
-    // Create an async connection
-    let conn = match &args.database_location {
-        DatabaseLocation::InMemory => Arc::new(Connection::open_in_memory().await?),
-        DatabaseLocation::File(path) => Arc::new(Connection::open(path).await?),
-    };
-
-    // Run your schema setup / migrations
-    setup_database(&conn.clone()).await?;
-
-    // Set up a TaskTracker to manage tasks
-    let tracker = TaskTracker::new();
-
-    {
-        let conn = conn.clone();
-        tracker.spawn(async move {
-            listen_for_events(
-                &args.evm_rpc_websocket_url,
-                &args.rift_exchange_address,
-                &conn,
-                args.deploy_block_number,
-            )
-            .await
-            .expect("Event listener failed"); //TODO: Propagate error
-        });
-    }
+    let data_engine = DataEngine::start(
+        args.database_location,
+        Arc::new(provider),
+        args.rift_exchange_address,
+        args.deploy_block_number,
+    )
+    .await?;
 
     // Build the Axum router
     let app = Router::new()
-        .route("/swaps", get(get_user_swaps))
-        .with_state(conn.clone());
+        .route("/swaps", get(get_swaps_for_address))
+        .route("/tip-proof", get(get_tip_proof))
+        .with_state(Arc::new(data_engine));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     tracing::info!("Listening on {}", addr);
 
     // Spawn the HTTP server as another tracked task
-    tracker.spawn(async move {
-        axum::serve(tokio::net::TcpListener::bind(&addr).await?, app)
-            .await
-            .map_err(|e| eyre::eyre!(e))?;
-        Ok::<_, eyre::Report>(())
-    });
-
-    // Close the tracker to prevent new tasks from being spawned
-    tracker.close();
-
-    // Wait for all tasks and propagate any errors
-    tracker.wait().await;
+    axum::serve(tokio::net::TcpListener::bind(&addr).await?, app)
+        .await
+        .map_err(|e| eyre::eyre!(e))?;
 
     Ok(())
 }
 
-async fn get_user_swaps(State(conn): State<Arc<Connection>>) -> Json<Vec<OTCSwap>> {
-    // TODO: Implement your logic to fetch OTCSwaps from the DB.
-    // For now, just returning an empty Vec:
-    Json(vec![])
+#[derive(Deserialize, Serialize)]
+struct VirtualSwapQuery {
+    address: Address,
+    page: u32,
 }
 
-async fn get_tip_proof(State(conn): State<Arc<Connection>>) -> Json<Vec<u8>> {
-    todo!()
+#[axum::debug_handler]
+async fn get_swaps_for_address(
+    State(data_engine): State<Arc<DataEngine>>,
+    Json(query): Json<VirtualSwapQuery>,
+) -> Result<Json<Vec<OTCSwap>>, (axum::http::StatusCode, String)> {
+    let swaps = data_engine
+        .get_virtual_swaps(query.address, query.page, None)
+        .await
+        // TODO: More useful error handling
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Failed to get swaps: {:?}", e),
+            )
+        })?;
+    Ok(Json(swaps))
+}
+
+#[derive(Deserialize, Serialize)]
+struct TipProofResponse {
+    leaf: BlockLeaf,
+    siblings: Vec<Digest>,
+    peaks: Vec<Digest>,
+}
+
+#[axum::debug_handler]
+async fn get_tip_proof(
+    State(data_engine): State<Arc<DataEngine>>,
+) -> Result<Json<TipProofResponse>, (axum::http::StatusCode, String)> {
+    let (leaf, siblings, peaks) = data_engine.get_tip_proof().await.map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Failed to get tip proof: {}", e),
+        )
+    })?;
+    Ok(Json(TipProofResponse {
+        leaf,
+        siblings,
+        peaks,
+    }))
 }

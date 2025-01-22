@@ -299,7 +299,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
 
         let new_leaves = &leaves[1..];
 
-        match self.find_by_leaf_hash(&parent_hash).await? {
+        match self.find_leaf_by_leaf_hash(&parent_hash).await? {
             Some((element_index, _)) => {
                 let leaf_index = element_index_to_leaf_index(element_index)
                     .map_err(|e| RiftSdkError::MMRError(format!("Failed leaf_index: {e}")))?;
@@ -388,12 +388,50 @@ impl<H: LeafHasher> IndexedMMR<H> {
     }
 
     /// Find if a given leaf-hash is in our reverse index => returns (index, data).
-    pub async fn find_by_leaf_hash(
+    pub async fn find_leaf_by_leaf_hash(
         &self,
         leaf_hash: &LeafDigest,
     ) -> Result<Option<(usize, BlockLeaf)>> {
         let val_opt = self.reverse_index.get_by_hash(leaf_hash).await?;
         Ok(val_opt.map(|v| (v.element_index, v.leaf_data)))
+    }
+
+    pub async fn find_leaf_by_leaf_index(&self, leaf_index: usize) -> Result<Option<BlockLeaf>> {
+        // Get the hash at the leaf index
+        let hash_opt = self
+            .client_mmr
+            .hashes
+            .get(accumulators::store::SubKey::Usize(leaf_index))
+            .await
+            .map_err(|e| RiftSdkError::MMRError(format!("Failed to get leaf: {e}")))?;
+
+        // If no hash found at this index, return None
+        let hash_str = match hash_opt {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+
+        // Convert the hex hash to LeafDigest
+        let leaf_hash =
+            LeafDigest::from(
+                <[u8; 32]>::try_from(hex::decode(hash_str.trim_start_matches("0x")).map_err(
+                    |e| RiftSdkError::MMRError(format!("Failed to decode leaf hash: {e}")),
+                )?)
+                .map_err(|_| RiftSdkError::MMRError("Invalid hash length".to_string()))?,
+            );
+
+        // Look up the leaf data in the reverse index
+        // if it doesn't exist here, something is wrong so error out
+        let reverse_index = match self.reverse_index.get_by_hash(&leaf_hash).await? {
+            Some(data) => data,
+            None => {
+                return Err(RiftSdkError::MMRError(
+                    "Leaf not found in reverse index".to_string(),
+                ))
+            }
+        };
+
+        Ok(Some(reverse_index.leaf_data))
     }
 
     /// Return the internal accumulators MMR if needed.
@@ -432,7 +470,7 @@ mod tests {
 
         // 3) Verify existence
         let h = leaf.hash::<Keccak256Hasher>();
-        let found = mmr.find_by_leaf_hash(&h).await?;
+        let found = mmr.find_leaf_by_leaf_hash(&h).await?;
         assert!(found.is_some(), "Leaf should be found");
 
         // 4) Check root is not zero
@@ -489,7 +527,7 @@ mod tests {
 
         // Verify the leaf can be found
         let leaf_hash = test_leaf.hash::<Keccak256Hasher>();
-        let found = indexed_mmr.find_by_leaf_hash(&leaf_hash).await?;
+        let found = indexed_mmr.find_leaf_by_leaf_hash(&leaf_hash).await?;
         assert!(found.is_some());
 
         // try to find a leaf that doesn't exist
@@ -500,7 +538,7 @@ mod tests {
         };
 
         let leaf_hash = test_leaf.hash::<Keccak256Hasher>();
-        let found = indexed_mmr.find_by_leaf_hash(&leaf_hash).await?;
+        let found = indexed_mmr.find_leaf_by_leaf_hash(&leaf_hash).await?;
         assert!(found.is_none());
 
         Ok(())
@@ -546,7 +584,7 @@ mod tests {
             let indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(mmr_db_location.clone()).await?;
 
             // Verify we can find the leaf
-            let found = indexed_mmr.find_by_leaf_hash(&leaf_hash).await?;
+            let found = indexed_mmr.find_leaf_by_leaf_hash(&leaf_hash).await?;
             assert!(found.is_some());
             println!("found: {:?}", found);
 
@@ -646,17 +684,17 @@ mod tests {
 
         // 7) Check that new leaves are indeed found in the reverse index
         let x_found = indexed_mmr
-            .find_by_leaf_hash(&leaf_x.hash::<Keccak256Hasher>())
+            .find_leaf_by_leaf_hash(&leaf_x.hash::<Keccak256Hasher>())
             .await?;
         let y_found = indexed_mmr
-            .find_by_leaf_hash(&leaf_y.hash::<Keccak256Hasher>())
+            .find_leaf_by_leaf_hash(&leaf_y.hash::<Keccak256Hasher>())
             .await?;
         assert!(x_found.is_some(), "Leaf X should be present");
         assert!(y_found.is_some(), "Leaf Y should be present");
 
         // Confirm that C is no longer found
         let c_found = indexed_mmr
-            .find_by_leaf_hash(&leaf_c.hash::<Keccak256Hasher>())
+            .find_leaf_by_leaf_hash(&leaf_c.hash::<Keccak256Hasher>())
             .await?;
         println!("c_found: {:?}", c_found);
         assert!(c_found.is_none(), "Leaf C should have been pruned");
@@ -736,7 +774,7 @@ mod tests {
         let all_leaves = [leaf_a, leaf_b, leaf_c, leaf_d];
         for leaf in all_leaves.iter() {
             let found = indexed_mmr
-                .find_by_leaf_hash(&leaf.hash::<Keccak256Hasher>())
+                .find_leaf_by_leaf_hash(&leaf.hash::<Keccak256Hasher>())
                 .await?;
             assert!(found.is_some(), "Leaf should be present in MMR");
         }

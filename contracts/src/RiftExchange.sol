@@ -274,7 +274,7 @@ contract RiftExchange is BitcoinLightClient {
         );
 
         VERIFIER.verifyProof(CIRCUIT_VERIFICATION_KEY, publicInputs, proof);
-        _updateRoot(priorMmrRoot, newMmrRoot);
+        _updateRoot(priorMmrRoot, newMmrRoot, compressedBlockLeaves);
 
         if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockSiblings, tipBlockPeaks))
             revert Errors.InvalidTipBlockInclusionProof();

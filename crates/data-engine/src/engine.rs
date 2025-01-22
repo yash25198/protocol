@@ -1,65 +1,128 @@
 use alloy::{
     primitives::Address,
-    providers::{Provider, ProviderBuilder, WsConnect},
-    pubsub::{ConnectionHandle, PubSubConnect},
-    rpc::{
-        client::ClientBuilder,
-        types::{BlockNumberOrTag, Filter},
-    },
+    providers::{Provider, WsConnect},
+    pubsub::{ConnectionHandle, PubSubConnect, PubSubFrontend},
+    rpc::types::{BlockNumberOrTag, Filter},
     sol_types::SolEvent,
     transports::{impl_future, TransportResult},
 };
-use backoff::ExponentialBackoff;
+use bitcoin_light_client_core::{
+    hasher::{Digest, Keccak256Hasher},
+    leaves::{decompress_block_leaves, BlockLeaf},
+};
 use eyre::Result;
 use futures_util::stream::StreamExt;
-use rift_sdk::bindings::RiftExchange;
 use rift_sdk::bindings::{
     non_artifacted_types::Types::SwapUpdateContext, non_artifacted_types::Types::VaultUpdateContext,
 };
-use std::str::FromStr;
-use tokio::sync::Mutex;
+use rift_sdk::mmr::IndexedMMR;
+use rift_sdk::{bindings::RiftExchange, DatabaseLocation};
+
+use std::{path::PathBuf, str::FromStr, sync::Arc};
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::db::{
-    add_deposit, add_proposed_swap, get_proposed_swap_id, update_deposit_to_withdrawn,
-    update_proposed_swap_to_released,
+    add_deposit, add_proposed_swap, get_proposed_swap_id, get_virtual_swaps, setup_swaps_database,
+    update_deposit_to_withdrawn, update_proposed_swap_to_released,
 };
 use crate::models::OTCSwap;
 
-#[derive(Clone, Debug)]
-pub struct RetryWsConnect(WsConnect);
+#[derive(Clone)]
+pub struct DataEngine {
+    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    swap_database_connection: Arc<tokio_rusqlite::Connection>,
+}
 
-impl PubSubConnect for RetryWsConnect {
-    fn is_local(&self) -> bool {
-        self.0.is_local()
-    }
+impl DataEngine {
+    pub async fn start(
+        database_location: DatabaseLocation,
+        provider: Arc<dyn Provider<PubSubFrontend>>,
+        rift_exchange_address: String,
+        deploy_block_number: u64,
+    ) -> Result<Self> {
+        let indexed_mmr = Arc::new(RwLock::new(
+            IndexedMMR::open(database_location.clone()).await?,
+        ));
+        let swap_database_connection = Arc::new(match database_location.clone() {
+            DatabaseLocation::InMemory => tokio_rusqlite::Connection::open_in_memory().await?,
+            DatabaseLocation::Directory(path) => {
+                tokio_rusqlite::Connection::open(get_qualified_swaps_database_path(path)).await?
+            }
+        });
+        setup_swaps_database(&swap_database_connection).await?;
 
-    fn connect(&self) -> impl_future!(<Output = TransportResult<ConnectionHandle>>) {
-        self.0.connect()
-    }
+        let indexed_mmr_clone = indexed_mmr.clone();
+        let swap_database_connection_clone = swap_database_connection.clone();
+        tokio::spawn(async move {
+            listen_for_events(
+                provider,
+                &swap_database_connection_clone,
+                indexed_mmr_clone,
+                &rift_exchange_address,
+                deploy_block_number,
+            )
+            .await
+            .expect("listen_for_events failed");
+        });
 
-    async fn try_reconnect(&self) -> TransportResult<ConnectionHandle> {
-        backoff::future::retry(ExponentialBackoff::default(), || async {
-            Ok(self.0.try_reconnect().await?)
+        Ok(Self {
+            indexed_mmr,
+            swap_database_connection,
         })
-        .await
     }
+
+    pub async fn get_virtual_swaps(
+        &self,
+        address: Address,
+        page: u32,
+        page_size: Option<u32>,
+    ) -> Result<Vec<OTCSwap>> {
+        let page_size = page_size.unwrap_or(50);
+        get_virtual_swaps(&self.swap_database_connection, address, page, page_size).await
+    }
+
+    // get's the tip of the MMR, and returns a proof of the tip
+    pub async fn get_tip_proof(&self) -> Result<(BlockLeaf, Vec<Digest>, Vec<Digest>)> {
+        let mmr = self.indexed_mmr.read().await;
+        let leaves_count = mmr.client_mmr().leaves_count.get().await?;
+        let leaf_index = leaves_count - 1;
+        let leaf = mmr.find_leaf_by_leaf_index(leaf_index).await?;
+        match leaf {
+            Some(leaf) => {
+                let proof = mmr.get_circuit_proof(leaf_index, None).await?;
+                let siblings = proof.siblings;
+                let peaks = proof.peaks;
+                Ok((leaf, siblings, peaks))
+            }
+            None => Err(eyre::eyre!("Leaf not found")),
+        }
+    }
+
+    // Delegate method that provides read access to the mmr
+    pub async fn with_mmr<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&IndexedMMR<Keccak256Hasher>) -> Result<T>,
+    {
+        let mmr = self.indexed_mmr.read().await;
+        f(&mmr)
+    }
+}
+
+fn get_qualified_swaps_database_path(database_location: String) -> String {
+    let path = PathBuf::from(database_location);
+    let swaps_db_path = path.join("swaps.db");
+    swaps_db_path.to_str().expect("Invalid path").to_string()
 }
 
 // This will run infinitely
 pub async fn listen_for_events(
-    evm_rpc_websocket_url: &str,
+    provider: Arc<dyn Provider<PubSubFrontend>>,
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
     rift_exchange_address: &str,
-    db_conn: &tokio_rusqlite::Connection,
     deploy_block_number: u64,
 ) -> Result<()> {
-    let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));
-    let client = ClientBuilder::default().pubsub(ws).await?;
-
-    let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
-        .on_client(client);
-
     let rift_exchange_address = Address::from_str(rift_exchange_address)?;
     let filter = Filter::new()
         .address(rift_exchange_address)
@@ -153,6 +216,25 @@ pub async fn listen_for_events(
                         _ => {}
                     }
                 }
+            }
+            Some(&RiftExchange::BlockTreeUpdated::SIGNATURE_HASH) => {
+                info!("Received BlockTreeUpdated event");
+                let block_tree_updated =
+                    RiftExchange::BlockTreeUpdated::decode_log(&log.inner, false)
+                        .expect("decoding succeeds");
+                let block_tree_root = block_tree_updated.data.treeRoot.0;
+                let compressed_block_leaves =
+                    block_tree_updated.data.compressedBlockLeaves.0.to_vec();
+                // decode the compressed block leaves
+                let block_leaves = decompress_block_leaves(&compressed_block_leaves);
+                // add the block leaves to the db
+                {
+                    let mut mmr = indexed_mmr.write().await;
+                    mmr.append_or_reorg_based_on_parent(&block_leaves).await?;
+                }
+                // calculate the root as a sanity check
+                let root = indexed_mmr.read().await.get_root().await?;
+                assert_eq!(root, block_tree_root);
             }
             _ => warn!("Unknown event topic"),
         }

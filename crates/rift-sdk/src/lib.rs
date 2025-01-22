@@ -3,8 +3,24 @@ pub mod mmr;
 pub mod transaction;
 
 mod errors;
+use alloy::providers::{ProviderBuilder, WsConnect};
+use alloy::pubsub::{ConnectionHandle, PubSubConnect};
+use alloy::rpc::client::ClientBuilder;
+use alloy::transports::{impl_future, TransportResult};
+use alloy::{
+    primitives::Address,
+    providers::Provider,
+    pubsub::PubSubFrontend,
+    rpc::types::{BlockNumberOrTag, Filter},
+    sol_types::SolEvent,
+};
+use backoff::exponential::ExponentialBackoff;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::Hash;
+use bitcoin_light_client_core::{
+    hasher::{Digest, Keccak256Hasher},
+    leaves::{decompress_block_leaves, BlockLeaf},
+};
 use sp1_sdk::include_elf;
 use std::fmt::Write;
 use std::str::FromStr;
@@ -45,4 +61,41 @@ impl FromStr for DatabaseLocation {
             s => Ok(DatabaseLocation::Directory(s.to_string())),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct RetryWsConnect(WsConnect);
+
+impl PubSubConnect for RetryWsConnect {
+    fn is_local(&self) -> bool {
+        self.0.is_local()
+    }
+
+    fn connect(&self) -> impl_future!(<Output = TransportResult<ConnectionHandle>>) {
+        self.0.connect()
+    }
+
+    async fn try_reconnect(&self) -> TransportResult<ConnectionHandle> {
+        backoff::future::retry(
+            ExponentialBackoff::<backoff::SystemClock>::default(),
+            || async { Ok(self.0.try_reconnect().await?) },
+        )
+        .await
+    }
+}
+
+pub async fn create_websocket_provider(
+    evm_rpc_websocket_url: &str,
+) -> errors::Result<impl Provider<PubSubFrontend>> {
+    let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));
+    let client = ClientBuilder::default()
+        .pubsub(ws)
+        .await
+        .map_err(|e| errors::RiftSdkError::WebsocketProviderError(e.to_string()))?;
+
+    let provider = ProviderBuilder::new()
+        .with_recommended_fillers()
+        .on_client(client);
+
+    Ok(provider)
 }

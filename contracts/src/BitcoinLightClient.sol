@@ -43,10 +43,10 @@ abstract contract BitcoinLightClient {
      *      1. The prior root matches the current stored root
      *      2. The prior root is different from the new root
      */
-    function _updateRoot(bytes32 priorMmrRoot, bytes32 newMmrRoot) internal {
+    function _updateRoot(bytes32 priorMmrRoot, bytes32 newMmrRoot, bytes calldata compressedBlockLeaves) internal {
         if (priorMmrRoot != mmrRoot || priorMmrRoot == newMmrRoot) return;
         mmrRoot = newMmrRoot;
-        emit Events.BlockTreeUpdated(newMmrRoot);
+        emit Events.BlockTreeUpdated(newMmrRoot, compressedBlockLeaves);
     }
 
     function _proveBlockInclusion(

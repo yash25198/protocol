@@ -1,14 +1,14 @@
 use crate::models::{
     ChainAwareDeposit, ChainAwareProposedSwap, ChainAwareRelease, ChainAwareWithdraw, OTCSwap,
 };
-use alloy::primitives::keccak256;
+use alloy::primitives::{keccak256, Address};
 use eyre::Result;
 use rift_sdk::bindings::Types::{DepositVault, ProposedSwap};
 use std::str::FromStr;
 use tokio_rusqlite::{params, Connection};
 
 /// Run initial table creation / migrations on an existing `tokio_sqlite::Connection`.
-pub async fn setup_database(conn: &Connection) -> Result<()> {
+pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
     let schema = r#"
         CREATE TABLE IF NOT EXISTS deposits (
             deposit_id            BLOB(32) PRIMARY KEY,
@@ -197,170 +197,205 @@ pub async fn add_deposit(
     Ok(())
 }
 
-pub async fn get_virtual_swap(conn: &Connection, deposit_id: [u8; 32]) -> Result<OTCSwap> {
-    let deposit_id_vec = deposit_id.to_vec();
+// a user's swaps are defined as depositor == user.address or recipient == user.address
+// note that explicit "maker/taker" doesn't really make sense at the OTC level, b/c the true
+// maker could be a recipient if the user begins with some ERC20 asset.
 
-    // 1) Load the deposit row from `deposits`
+// TODO: This is not as efficient as it could be, since we're fetching all deposits and then all swaps for each deposit as seperate queries.
+// We should instead fetch all the relevant data in a single query.
+pub async fn get_virtual_swaps(
+    conn: &Connection,
+    address: Address,
+    page: u32,
+    page_size: u32,
+) -> Result<Vec<OTCSwap>> {
+    let offset = page * page_size;
+    let address_str = address.to_string();
+
+    // The main query for the relevant deposits.
+    // We limit by `page_size` and offset by `(page * page_size)`.
     conn.call(move |conn| {
         let mut stmt = conn.prepare(
             r#"
             SELECT
-                deposit_vault,
-                deposit_block_number,
-                deposit_block_hash,
-                deposit_txid,
-                withdraw_txid,
-                withdraw_block_number,
-                withdraw_block_hash
+                -- columns in the deposits table
+                deposit_id,            -- 0
+                depositor,             -- 1
+                recipient,             -- 2
+                deposit_vault,         -- 3 (JSON-serialized DepositVault)
+                deposit_block_number,  -- 4
+                deposit_block_hash,    -- 5
+                deposit_txid,          -- 6
+                withdraw_txid,         -- 7
+                withdraw_block_number, -- 8
+                withdraw_block_hash    -- 9
             FROM deposits
-            WHERE deposit_id = ?1
+            WHERE depositor = ?1 OR recipient = ?1
+            ORDER BY deposit_block_number DESC
+            LIMIT ?2
+            OFFSET ?3
             "#,
         )?;
 
-        let mut rows = stmt.query(params![deposit_id_vec.clone()])?;
+        let mut rows = stmt.query(params![address_str, page_size as i64, offset as i64])?;
 
-        let row = match rows.next()? {
-            Some(r) => r,
-            None => {
-                return Err(tokio_rusqlite::Error::Other(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("No deposit found for deposit_id = {:?}", deposit_id),
-                ))));
-            }
-        };
-
-        let deposit_vault_str: String = row.get(0)?;
-        let deposit_block_number_i64: i64 = row.get(1)?;
-        let deposit_block_hash_bytes: Vec<u8> = row.get(2)?;
-        let deposit_txid_bytes: Vec<u8> = row.get(3)?;
-        let withdraw_txid_opt_bytes: Option<Vec<u8>> = row.get(4)?;
-        let withdraw_block_number_opt: Option<i64> = row.get(5)?;
-        let withdraw_block_hash_opt_bytes: Option<Vec<u8>> = row.get(6)?;
-
-        let deposit_block_number = deposit_block_number_i64 as u64;
-
-        let deposit_block_hash: [u8; 32] = deposit_block_hash_bytes
-            .try_into()
-            .expect("Invalid deposit_block_hash length");
-        let deposit_txid: [u8; 32] = deposit_txid_bytes
-            .try_into()
-            .expect("Invalid deposit_txid length");
-
-        // Convert deposit_vault JSON to `DepositVault`
-        let deposit_vault: DepositVault =
-            serde_json::from_str(&deposit_vault_str).expect("Failed to parse DepositVault JSON");
-
-        // Convert withdraw data
-        let withdraw = match (
-            withdraw_txid_opt_bytes,
-            withdraw_block_number_opt,
-            withdraw_block_hash_opt_bytes,
-        ) {
-            (Some(txid_bytes), Some(block_number), Some(block_hash_bytes)) => {
-                let withdraw_txid = txid_bytes.try_into().expect("Invalid withdraw_txid length");
-                let withdraw_block_hash = block_hash_bytes
-                    .try_into()
-                    .expect("Invalid withdraw_block_hash length");
-
-                Some(ChainAwareWithdraw {
-                    withdraw_txid,
-                    withdraw_block_hash,
-                    withdraw_block_number: block_number as u64,
-                })
-            }
-            _ => None,
-        };
-
-        // 2) Load the proposed swaps from `proposed_swaps`
-        let mut ps_stmt = conn.prepare(
-            r#"
-            SELECT
-                proposed_block_number,
-                proposed_block_hash,
-                proposed_txid,
-                swap_proof,
-                proposed_release_txid,
-                proposed_release_block_number,
-                proposed_release_block_hash
-            FROM proposed_swaps
-            WHERE deposit_id = ?1
-            ORDER BY proposed_swap_id ASC
-            "#,
-        )?;
-
-        let mut rows = ps_stmt.query(params![deposit_id_vec])?;
-        let mut chain_aware_swaps: Vec<ChainAwareProposedSwap> = Vec::new();
+        let mut swaps = Vec::new();
 
         while let Some(row) = rows.next()? {
-            let proposed_block_number_i64: i64 = row.get(0)?;
-            let proposed_block_number = proposed_block_number_i64 as u64;
-
-            let proposed_block_hash_bytes: Vec<u8> = row.get(1)?;
-            let proposed_block_hash: [u8; 32] = proposed_block_hash_bytes
+            //
+            // --- Parse the deposit-level data ---
+            //
+            let deposit_id_vec: Vec<u8> = row.get(0)?;
+            let deposit_id: [u8; 32] = deposit_id_vec
                 .try_into()
-                .expect("Invalid proposed_block_hash length");
+                .map_err(|_| tokio_rusqlite::Error::Other("Failed to decode deposit_id".into()))?;
 
-            let proposed_txid_bytes: Vec<u8> = row.get(2)?;
-            let proposed_txid: [u8; 32] = proposed_txid_bytes
+            // The deposit_vault column is JSON-serialized `DepositVault`
+            let deposit_vault_str: String = row.get(3)?;
+            let deposit_vault: DepositVault =
+                serde_json::from_str(&deposit_vault_str).map_err(|e| {
+                    tokio_rusqlite::Error::Other(
+                        format!("Failed to deserialize DepositVault: {:?}", e).into(),
+                    )
+                })?;
+
+            let deposit_block_number: i64 = row.get(4)?;
+            let deposit_block_hash_vec: Vec<u8> = row.get(5)?;
+            let deposit_block_hash: [u8; 32] = deposit_block_hash_vec.try_into().map_err(|_| {
+                tokio_rusqlite::Error::Other("Invalid deposit_block_hash length".into())
+            })?;
+
+            let deposit_txid_vec: Vec<u8> = row.get(6)?;
+            let deposit_txid: [u8; 32] = deposit_txid_vec
                 .try_into()
-                .expect("Invalid proposed_txid length");
+                .map_err(|_| tokio_rusqlite::Error::Other("Invalid deposit_txid length".into()))?;
 
-            let swap_proof_str: String = row.get(3)?;
-            let swap: ProposedSwap =
-                serde_json::from_str(&swap_proof_str).expect("Failed to parse ProposedSwap JSON");
+            // Withdraw columns are optional
+            let withdraw_txid_vec: Option<Vec<u8>> = row.get(7)?;
+            let withdraw_block_number: Option<i64> = row.get(8)?;
+            let withdraw_block_hash_vec: Option<Vec<u8>> = row.get(9)?;
 
-            let release_txid_opt: Option<Vec<u8>> = row.get(4)?;
-            let proposed_release_block_number_opt: Option<i64> = row.get(5)?;
-            let proposed_release_block_hash_opt: Option<Vec<u8>> = row.get(6)?;
-
-            let release_txid = release_txid_opt.map(|bytes| {
-                bytes
-                    .try_into()
-                    .expect("Invalid proposed_release_txid length")
-            });
-
-            // (Optionally, you might store more release info if needed.)
-            let release_block_number = proposed_release_block_number_opt.map(|x| x as u64);
-            let release_block_hash = proposed_release_block_hash_opt.map(|x| {
-                x.try_into()
-                    .expect("Invalid proposed_release_block_hash length")
-            });
-
-            let release = match (release_txid, release_block_number, release_block_hash) {
-                (Some(txid), Some(block_number), Some(block_hash)) => Some(ChainAwareRelease {
-                    release_txid: txid,
-                    release_block_hash: block_hash,
-                    release_block_number: block_number,
-                }),
-                _ => None,
+            // Assemble optional withdraw info
+            let withdraw = if let (Some(txid_vec), Some(block_num), Some(block_hash_vec)) = (
+                withdraw_txid_vec,
+                withdraw_block_number,
+                withdraw_block_hash_vec,
+            ) {
+                Some(ChainAwareWithdraw {
+                    withdraw_txid: txid_vec.try_into().map_err(|_| {
+                        tokio_rusqlite::Error::Other("Invalid withdraw_txid length".into())
+                    })?,
+                    withdraw_block_hash: block_hash_vec.try_into().map_err(|_| {
+                        tokio_rusqlite::Error::Other("Invalid withdraw_block_hash length".into())
+                    })?,
+                    withdraw_block_number: block_num as u64,
+                })
+            } else {
+                None
             };
 
-            let cap = ChainAwareProposedSwap {
-                swap,
-                swap_proof_txid: proposed_txid,
-                swap_proof_block_hash: proposed_block_hash,
-                swap_proof_block_number: proposed_block_number,
-                release,
+            let chain_deposit = ChainAwareDeposit {
+                deposit: deposit_vault,
+                deposit_block_number: deposit_block_number as u64,
+                deposit_block_hash,
+                deposit_txid,
             };
-            chain_aware_swaps.push(cap);
+
+            //
+            // --- For each deposit, fetch all associated ProposedSwaps ---
+            //
+            let mut swap_stmt = conn.prepare(
+                r#"
+                SELECT
+                    proposed_swap_id,            -- 0
+                    deposit_id,                  -- 1
+                    proposed_block_number,       -- 2
+                    proposed_block_hash,         -- 3
+                    proposed_txid,               -- 4
+                    swap_proof,                  -- 5 (JSON-serialized ProposedSwap)
+                    proposed_release_txid,       -- 6
+                    proposed_release_block_number, -- 7
+                    proposed_release_block_hash  -- 8
+                FROM proposed_swaps
+                WHERE deposit_id = ?1
+                ORDER BY proposed_block_number ASC
+                "#,
+            )?;
+
+            let mut swap_rows = swap_stmt.query(params![deposit_id])?;
+            let mut swap_proofs = Vec::new();
+
+            while let Some(swap_row) = swap_rows.next()? {
+                //
+                // --- Parse each ProposedSwap row ---
+                //
+                // We'll skip the deposit_id column from row (index=1) since we already know it.
+                let proposed_block_number: i64 = swap_row.get(2)?;
+                let proposed_block_hash_vec: Vec<u8> = swap_row.get(3)?;
+                let proposed_block_hash: [u8; 32] =
+                    proposed_block_hash_vec.try_into().map_err(|_| {
+                        tokio_rusqlite::Error::Other("Invalid proposed_block_hash length".into())
+                    })?;
+
+                let proposed_txid_vec: Vec<u8> = swap_row.get(4)?;
+                let proposed_txid: [u8; 32] = proposed_txid_vec.try_into().map_err(|_| {
+                    tokio_rusqlite::Error::Other("Invalid proposed_txid length".into())
+                })?;
+
+                let swap_proof_str: String = swap_row.get(5)?;
+                let swap: ProposedSwap = serde_json::from_str(&swap_proof_str).map_err(|e| {
+                    tokio_rusqlite::Error::Other(
+                        format!("Failed to deserialize ProposedSwap: {:?}", e).into(),
+                    )
+                })?;
+
+                // release columns
+                let proposed_release_txid_vec: Option<Vec<u8>> = swap_row.get(6)?;
+                let proposed_release_block_number: Option<i64> = swap_row.get(7)?;
+                let proposed_release_block_hash_vec: Option<Vec<u8>> = swap_row.get(8)?;
+
+                let release =
+                    if let (Some(rel_txid_vec), Some(rel_block_num), Some(rel_block_hash_vec)) = (
+                        proposed_release_txid_vec,
+                        proposed_release_block_number,
+                        proposed_release_block_hash_vec,
+                    ) {
+                        Some(ChainAwareRelease {
+                            release_txid: rel_txid_vec.try_into().map_err(|_| {
+                                tokio_rusqlite::Error::Other("Invalid release_txid length".into())
+                            })?,
+                            release_block_hash: rel_block_hash_vec.try_into().map_err(|_| {
+                                tokio_rusqlite::Error::Other(
+                                    "Invalid release_block_hash length".into(),
+                                )
+                            })?,
+                            release_block_number: rel_block_num as u64,
+                        })
+                    } else {
+                        None
+                    };
+
+                let chain_swap = ChainAwareProposedSwap {
+                    swap,
+                    swap_proof_txid: proposed_txid,
+                    swap_proof_block_hash: proposed_block_hash,
+                    swap_proof_block_number: proposed_block_number as u64,
+                    release,
+                };
+
+                swap_proofs.push(chain_swap);
+            }
+
+            // Finally assemble the OTCSwap
+            let otcswap = OTCSwap {
+                deposit: chain_deposit,
+                swap_proofs,
+                withdraw,
+            };
+            swaps.push(otcswap);
         }
 
-        // 3) Construct the ChainAwareDeposit
-        let chain_aware_deposit = ChainAwareDeposit {
-            deposit: deposit_vault,
-            deposit_block_number,
-            deposit_block_hash,
-            deposit_txid,
-        };
-
-        // 4) Construct the OTCSwap
-        let otcswap = OTCSwap {
-            deposit: chain_aware_deposit,
-            swap_proofs: chain_aware_swaps,
-            withdraw,
-        };
-
-        Ok(otcswap)
+        Ok(swaps)
     })
     .await
     .map_err(|e| eyre::eyre!(e))

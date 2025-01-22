@@ -6,7 +6,9 @@ rust-version.workspace = true
 exclude.workspace = true
 
 [dependencies]
+bitcoin-light-client-core.workspace = true
 axum.workspace = true
+alloy.workspace = true
 data-engine.workspace = true
 tokio-util.workspace = true
 tokio-rusqlite.workspace = true

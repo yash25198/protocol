@@ -61,7 +61,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 
 tokio-rusqlite = { version = "0.6.0", features = ["bundled"] }
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.7", features = ["json", "macros"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tempfile = { version = "3.6.0" }
 

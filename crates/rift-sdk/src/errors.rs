@@ -16,6 +16,9 @@ pub enum RiftSdkError {
 
     #[error("MMR error: {0}")]
     MMRError(String),
+
+    #[error("Failed to create websocket provider: {0}")]
+    WebsocketProviderError(String),
 }
 
 pub type Result<T> = std::result::Result<T, RiftSdkError>;
