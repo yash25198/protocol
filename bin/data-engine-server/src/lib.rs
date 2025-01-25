@@ -2,7 +2,7 @@ use alloy::primitives::Address;
 use axum::{extract::State, routing::get, Json, Router};
 use bitcoin_light_client_core::hasher::Digest;
 use bitcoin_light_client_core::leaves::BlockLeaf;
-use clap::Parser;
+use clap::{command, Parser};
 use data_engine::engine::DataEngine;
 use data_engine::models::OTCSwap;
 use eyre::Result;
@@ -11,49 +11,24 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-#[derive(Parser)]
+#[derive(Clone, Parser)]
 #[command(author, version, about, long_about = None)]
-struct Args {
-    /// Websocket URL of the EVM network to subscribe to events on  
-    #[arg(long)]
-    evm_rpc_websocket_url: String,
-
-    /// Rift Exchange contract address
-    #[arg(long)]
-    rift_exchange_address: String,
-
-    /// The location of the database
-    #[arg(long, value_parser)]
-    database_location: DatabaseLocation,
-
-    /// The block number when the contract was deployed
-    #[arg(long)]
-    deploy_block_number: u64,
-
-    /// The port to listen on
-    #[arg(long, default_value = "8201")]
-    port: u16,
+pub struct ServerConfig {
+    pub evm_rpc_websocket_url: String,
+    pub rift_exchange_address: String,
+    pub database_location: DatabaseLocation,
+    pub deploy_block_number: u64,
+    pub port: u16,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Set up tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
-
-    // Parse CLI args
-    let args = Args::parse();
-    let provider = create_websocket_provider(&args.evm_rpc_websocket_url).await?;
+pub async fn run_server(config: ServerConfig) -> Result<()> {
+    let provider = create_websocket_provider(&config.evm_rpc_websocket_url).await?;
 
     let data_engine = DataEngine::start(
-        args.database_location,
+        config.database_location,
         Arc::new(provider),
-        args.rift_exchange_address,
-        args.deploy_block_number,
+        config.rift_exchange_address,
+        config.deploy_block_number,
     )
     .await?;
 
@@ -61,9 +36,11 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/swaps", get(get_swaps_for_address))
         .route("/tip-proof", get(get_tip_proof))
+        .route("/contract-bitcoin-tip", get(get_latest_contract_block))
+        .route("/health", get(health))
         .with_state(Arc::new(data_engine));
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
+    let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
     tracing::info!("Listening on {}", addr);
 
     // Spawn the HTTP server as another tracked task
@@ -120,4 +97,20 @@ async fn get_tip_proof(
         siblings,
         peaks,
     }))
+}
+
+#[axum::debug_handler]
+async fn get_latest_contract_block(
+    State(data_engine): State<Arc<DataEngine>>,
+) -> Result<Json<u64>, (axum::http::StatusCode, String)> {
+    let block_number = data_engine
+        .get_leaf_count()
+        .await
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(block_number as u64))
+}
+
+#[axum::debug_handler]
+async fn health() -> Result<Json<String>, (axum::http::StatusCode, String)> {
+    Ok(Json("OK".to_string()))
 }

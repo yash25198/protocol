@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 exclude.workspace = true
 
+[[bin]]
+name = "data-engine-server"
+path = "src/bin/main.rs"
+
 [dependencies]
 bitcoin-light-client-core.workspace = true
 axum.workspace = true

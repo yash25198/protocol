@@ -2101,6 +2101,7 @@ dependencies = [
  "bitcoin-light-client-core",
  "chrono",
  "clap",
+ "data-engine-server",
  "env_logger",
  "eyre",
  "futures",

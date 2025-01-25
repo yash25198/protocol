@@ -29,8 +29,10 @@ rift-core = { path = "crates/rift-core" }
 rift-sdk = { path = "crates/rift-sdk" }
 rift-program = {path = "crates/rift-program"}
 data-engine = { path = "crates/data-engine" }
-devnet = {path = "bin/devnet"}
 test-data-utils = { path = "test-data" }
+
+data-engine-server = { path = "bin/data-engine-server" }
+devnet = {path = "bin/devnet"}
 
 # SP1 dependencies
 sp1-helper = "4.0.0-rc.8"

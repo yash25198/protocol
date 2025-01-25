@@ -21,12 +21,21 @@ use bitcoin_light_client_core::{
     hasher::{Digest, Keccak256Hasher},
     leaves::{decompress_block_leaves, BlockLeaf},
 };
-use sp1_sdk::include_elf;
+use sp1_sdk::client::ProverClientBuilder;
+use sp1_sdk::HashableKey;
+use sp1_sdk::Prover;
+use sp1_sdk::{include_elf, ProverClient};
 use std::fmt::Write;
 use std::str::FromStr;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const RIFT_PROGRAM_ELF: &[u8] = include_elf!("rift-program");
+
+pub fn get_rift_program_hash() -> [u8; 32] {
+    let client = ProverClient::builder().mock().build();
+    let (_, vk) = client.setup(RIFT_PROGRAM_ELF);
+    vk.bytes32_raw()
+}
 
 pub fn load_hex_bytes(file: &str) -> Vec<u8> {
     let hex_string = std::fs::read_to_string(file).expect("Failed to read file");

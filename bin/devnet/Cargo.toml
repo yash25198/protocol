@@ -11,6 +11,7 @@ path = "src/bin/devnet.rs"
 rift-core = { workspace = true }
 rift-sdk = { workspace = true }
 bitcoin-light-client-core = { workspace = true }
+data-engine-server = { workspace = true }
 
 alloy = { workspace = true }
 clap = { workspace = true }

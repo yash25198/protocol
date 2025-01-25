@@ -100,12 +100,9 @@ impl DataEngine {
     }
 
     // Delegate method that provides read access to the mmr
-    pub async fn with_mmr<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(&IndexedMMR<Keccak256Hasher>) -> Result<T>,
-    {
+    pub async fn get_leaf_count(&self) -> Result<usize> {
         let mmr = self.indexed_mmr.read().await;
-        f(&mmr)
+        mmr.get_leaf_count().await.map_err(|e| eyre::eyre!(e))
     }
 }
 

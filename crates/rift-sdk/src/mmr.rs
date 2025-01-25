@@ -443,6 +443,14 @@ impl<H: LeafHasher> IndexedMMR<H> {
     pub fn leaf_hasher_name(&self) -> &str {
         H::name()
     }
+
+    pub async fn get_leaf_count(&self) -> Result<usize> {
+        self.client_mmr
+            .leaves_count
+            .get()
+            .await
+            .map_err(|e| RiftSdkError::MMRError(format!("Failed to get leaf count: {e}")))
+    }
 }
 
 // -----------------------------------------------------------------------------

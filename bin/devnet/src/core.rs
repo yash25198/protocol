@@ -6,8 +6,8 @@ use alloy::providers::fillers::WalletFiller;
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
 };
-use alloy::providers::WsConnect;
 use alloy::providers::{Identity, RootProvider};
+use alloy::providers::{Provider, WsConnect};
 use alloy::pubsub::ConnectionHandle;
 use alloy::pubsub::PubSubConnect;
 use alloy::sol;
@@ -18,7 +18,10 @@ use alloy::{hex::FromHex, pubsub::PubSubFrontend};
 use bitcoin::constants::genesis_block;
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
 use chrono;
+use data_engine_server::run_server;
+use data_engine_server::ServerConfig;
 use log::info;
+use rift_sdk::DatabaseLocation;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
@@ -76,14 +79,34 @@ impl RiftDevnet {
         let hypernode_signer: PrivateKeySigner = anvil.keys()[1].clone().into();
         let hypernode_address = hypernode_signer.address();
 
-        let sp1_circuit_verification_hash =
-            hex!("000000000000000000000000000000000000000000000000000000000000beef");
+        let sp1_circuit_verification_hash = rift_sdk::get_rift_program_hash();
+        println!(
+            "SP1 Circuit Verification Hash: {}",
+            hex::encode(sp1_circuit_verification_hash)
+        );
 
         // now setup contracts
-        let (rift_exchange, token_contract) =
+        let (rift_exchange, token_contract, deployment_block_number) =
             deploy_contracts(&anvil, sp1_circuit_verification_hash).await?;
 
         let provider = rift_exchange.provider().clone();
+
+        let data_engine_server_port = 50100;
+        {
+            let anvil_ws_url = anvil.ws_endpoint_url().to_string();
+            let rift_exchange_address = rift_exchange.address().to_string();
+            tokio::spawn(async move {
+                run_server(ServerConfig {
+                    evm_rpc_websocket_url: anvil_ws_url,
+                    rift_exchange_address,
+                    database_location: DatabaseLocation::InMemory,
+                    deploy_block_number: deployment_block_number,
+                    port: data_engine_server_port,
+                })
+                .await
+                .expect("Failed to run server");
+            });
+        }
 
         // give some eth using anvil
         provider
@@ -94,6 +117,10 @@ impl RiftDevnet {
         println!("Anvil HTTP Url:        {}", anvil.endpoint());
         println!("Anvil WS Url:          {}", anvil.ws_endpoint());
         println!("Anvil Chain ID:        {}", anvil.chain_id());
+        println!(
+            "Data Engine HTTP URL:  http://localhost:{}",
+            data_engine_server_port
+        );
         println!(
             "{:<22} {}",
             format!("{} Address:", token_contract.symbol().call().await?._0),
@@ -134,7 +161,7 @@ impl RiftDevnet {
 async fn deploy_contracts(
     anvil: &AnvilInstance,
     circuit_verification_key_hash: [u8; 32],
-) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockTokenWebsocket>)> {
+) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockTokenWebsocket>, u64)> {
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     info!("Exchange owner address: {}", signer.address());
     let wallet = EthereumWallet::from(signer.clone());
@@ -183,6 +210,7 @@ async fn deploy_contracts(
         ),
     };
 
+    let deployment_block_number = provider.get_block_number().await?;
     let contract = RiftExchange::deploy(
         provider.clone(),
         get_genesis_leaf().hash::<Keccak256Hasher>().into(),
@@ -194,7 +222,11 @@ async fn deploy_contracts(
     )
     .await?;
 
-    Ok((Arc::new(contract), Arc::new(token_contract)))
+    Ok((
+        Arc::new(contract),
+        Arc::new(token_contract),
+        deployment_block_number,
+    ))
 }
 
 async fn spawn_anvil() -> Result<AnvilInstance> {
@@ -203,7 +235,7 @@ async fn spawn_anvil() -> Result<AnvilInstance> {
         Anvil::new()
             .block_time(1)
             .chain_id(1337)
-            .port(50123_u16)
+            .port(50101_u16)
             .arg("--steps-tracing")
             .arg("--timestamp")
             .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string())
