@@ -33,7 +33,6 @@ pub async fn run_server(config: ServerConfig, initial_block_leaf: BlockLeaf) -> 
     .await?;
 
     if data_engine.get_leaf_count().await? == 0 {
-        println!("seeding data engine with initial block leaf");
         // TODO: Create a more ergonomic abstraction over "seeding" the data engine if starting fresh
         let append_result = data_engine
             .indexed_mmr
@@ -41,7 +40,7 @@ pub async fn run_server(config: ServerConfig, initial_block_leaf: BlockLeaf) -> 
             .await
             .append(&initial_block_leaf)
             .await?;
-        println!("append_result: {:?}", append_result);
+        println!("Seeded data engine with genesis block leaf...");
     }
 
     // Build the Axum router

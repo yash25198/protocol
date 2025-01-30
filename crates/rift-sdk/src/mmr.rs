@@ -408,15 +408,11 @@ impl<H: LeafHasher> IndexedMMR<H> {
             .await
             .map_err(|e| RiftSdkError::MMRError(format!("Failed to get leaf: {e}")))?;
 
-        println!("[find_leaf_by_leaf_index]hash_opt: {:?}", hash_opt);
-
         // If no hash found at this index, return None
         let hash_str = match hash_opt {
             Some(h) => h,
             None => return Ok(None),
         };
-
-        println!("[find_leaf_by_leaf_index]hash_str: {:?}", hash_str);
 
         // Convert the hex hash to LeafDigest
         let leaf_hash =
