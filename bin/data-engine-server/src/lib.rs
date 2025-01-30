@@ -21,7 +21,7 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-pub async fn run_server(config: ServerConfig) -> Result<()> {
+pub async fn run_server(config: ServerConfig, initial_block_leaf: BlockLeaf) -> Result<()> {
     let provider = create_websocket_provider(&config.evm_rpc_websocket_url).await?;
 
     let data_engine = DataEngine::start(
@@ -31,6 +31,18 @@ pub async fn run_server(config: ServerConfig) -> Result<()> {
         config.deploy_block_number,
     )
     .await?;
+
+    if data_engine.get_leaf_count().await? == 0 {
+        println!("seeding data engine with initial block leaf");
+        // TODO: Create a more ergonomic abstraction over "seeding" the data engine if starting fresh
+        let append_result = data_engine
+            .indexed_mmr
+            .write()
+            .await
+            .append(&initial_block_leaf)
+            .await?;
+        println!("append_result: {:?}", append_result);
+    }
 
     // Build the Axum router
     let app = Router::new()

@@ -30,8 +30,8 @@ use crate::models::OTCSwap;
 
 #[derive(Clone)]
 pub struct DataEngine {
-    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
-    swap_database_connection: Arc<tokio_rusqlite::Connection>,
+    pub indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
 }
 
 impl DataEngine {
@@ -86,8 +86,11 @@ impl DataEngine {
     pub async fn get_tip_proof(&self) -> Result<(BlockLeaf, Vec<Digest>, Vec<Digest>)> {
         let mmr = self.indexed_mmr.read().await;
         let leaves_count = mmr.client_mmr().leaves_count.get().await?;
+        println!("leaves_count: {:?}", leaves_count);
         let leaf_index = leaves_count - 1;
+        println!("leaf_index: {:?}", leaf_index);
         let leaf = mmr.find_leaf_by_leaf_index(leaf_index).await?;
+        println!("leaf: {:?}", leaf);
         match leaf {
             Some(leaf) => {
                 let proof = mmr.get_circuit_proof(leaf_index, None).await?;

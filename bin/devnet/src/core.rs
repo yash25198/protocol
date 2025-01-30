@@ -96,13 +96,16 @@ impl RiftDevnet {
             let anvil_ws_url = anvil.ws_endpoint_url().to_string();
             let rift_exchange_address = rift_exchange.address().to_string();
             tokio::spawn(async move {
-                run_server(ServerConfig {
-                    evm_rpc_websocket_url: anvil_ws_url,
-                    rift_exchange_address,
-                    database_location: DatabaseLocation::InMemory,
-                    deploy_block_number: deployment_block_number,
-                    port: data_engine_server_port,
-                })
+                run_server(
+                    ServerConfig {
+                        evm_rpc_websocket_url: anvil_ws_url,
+                        rift_exchange_address,
+                        database_location: DatabaseLocation::InMemory,
+                        deploy_block_number: deployment_block_number,
+                        port: data_engine_server_port,
+                    },
+                    get_genesis_leaf(),
+                )
                 .await
                 .expect("Failed to run server");
             });
@@ -162,6 +165,14 @@ async fn deploy_contracts(
     anvil: &AnvilInstance,
     circuit_verification_key_hash: [u8; 32],
 ) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockTokenWebsocket>, u64)> {
+    let block_leaf = Types::BlockLeaf {
+        height: get_genesis_leaf().height.into(),
+        blockHash: get_genesis_leaf().hash::<Keccak256Hasher>().into(),
+        cumulativeChainwork: ruint::Uint::<256, 4>::from_be_bytes(
+            get_genesis_leaf().cumulative_chainwork,
+        ),
+    };
+
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     info!("Exchange owner address: {}", signer.address());
     let wallet = EthereumWallet::from(signer.clone());
@@ -192,24 +203,6 @@ async fn deploy_contracts(
     .await?;
 
     info!("USDC address: {}", token_contract.address());
-    /*
-       address _initialOwner,
-       bytes32 _mmrRoot,
-       Types.BlockLeaf memory _initialCheckpointLeaf,
-       address _depositToken,
-       bytes32 _circuitVerificationKey,
-       address _verifierContract,
-       address _feeRouterAddress
-    */
-
-    let block_leaf = Types::BlockLeaf {
-        height: get_genesis_leaf().height.into(),
-        blockHash: get_genesis_leaf().hash::<Keccak256Hasher>().into(),
-        cumulativeChainwork: ruint::Uint::<256, 4>::from_be_bytes(
-            get_genesis_leaf().cumulative_chainwork,
-        ),
-    };
-
     let deployment_block_number = provider.get_block_number().await?;
     let contract = RiftExchange::deploy(
         provider.clone(),

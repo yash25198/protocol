@@ -1,3 +1,4 @@
+use bitcoin_light_client_core::leaves::get_genesis_leaf;
 use clap::Parser;
 use eyre::Result;
 
@@ -16,5 +17,6 @@ async fn main() -> Result<()> {
 
     // Parse CLI args
     let config = ServerConfig::parse();
-    run_server(config).await
+    let initial_block_leaf = get_genesis_leaf();
+    run_server(config, initial_block_leaf).await
 }

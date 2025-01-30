@@ -7,8 +7,9 @@ use alloy::hex;
 use serde::{Deserialize, Serialize};
 
 use accumulators::mmr::{
-    self, element_index_to_leaf_index, elements_count_to_leaf_count, AppendResult,
-    Proof as ClientMMRProof, ProofOptions, MMR as ClientMMR,
+    self, element_index_to_leaf_index, elements_count_to_leaf_count,
+    map_leaf_index_to_element_index, AppendResult, Proof as ClientMMRProof, ProofOptions,
+    MMR as ClientMMR,
 };
 use accumulators::{
     hasher::keccak::KeccakHasher as AccumulatorsKeccakHasher,
@@ -362,7 +363,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
     ) -> Result<ClientMMRProof> {
         self.client_mmr
             .get_proof(
-                leaf_index,
+                map_leaf_index_to_element_index(leaf_index),
                 Some(ProofOptions {
                     elements_count,
                     ..Default::default()
@@ -401,15 +402,21 @@ impl<H: LeafHasher> IndexedMMR<H> {
         let hash_opt = self
             .client_mmr
             .hashes
-            .get(accumulators::store::SubKey::Usize(leaf_index))
+            .get(accumulators::store::SubKey::Usize(
+                map_leaf_index_to_element_index(leaf_index),
+            ))
             .await
             .map_err(|e| RiftSdkError::MMRError(format!("Failed to get leaf: {e}")))?;
+
+        println!("[find_leaf_by_leaf_index]hash_opt: {:?}", hash_opt);
 
         // If no hash found at this index, return None
         let hash_str = match hash_opt {
             Some(h) => h,
             None => return Ok(None),
         };
+
+        println!("[find_leaf_by_leaf_index]hash_str: {:?}", hash_str);
 
         // Convert the hex hash to LeafDigest
         let leaf_hash =
@@ -419,6 +426,8 @@ impl<H: LeafHasher> IndexedMMR<H> {
                 )?)
                 .map_err(|_| RiftSdkError::MMRError("Invalid hash length".to_string()))?,
             );
+
+        println!("[find_leaf_by_leaf_index]leaf_hash: {:?}", leaf_hash);
 
         // Look up the leaf data in the reverse index
         // if it doesn't exist here, something is wrong so error out
