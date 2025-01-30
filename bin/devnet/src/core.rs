@@ -79,8 +79,7 @@ impl RiftDevnet {
         let hypernode_signer: PrivateKeySigner = anvil.keys()[1].clone().into();
         let hypernode_address = hypernode_signer.address();
 
-        let sp1_circuit_verification_hash =
-            hex!("00ed029b9a3492387eb331bbc58e5ab9057d68c4ca052f0549cbec35c688f050"); //rift_sdk::get_rift_program_hash();
+        let sp1_circuit_verification_hash = rift_sdk::get_rift_program_hash();
         println!(
             "SP1 Circuit Verification Hash: {}",
             hex::encode(sp1_circuit_verification_hash)
