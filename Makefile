@@ -1,11 +1,14 @@
 sync:
 	cd contracts && forge build  && ./sync-artifacts.sh
+
+build: | sync
 	cargo build --release
 
-test-contracts: | sync
+test-contracts: | sync 
+	cargo build --release --bin test-utils 
 	cd contracts && forge test
 
-test-crates: | sync
+test-crates: | build
 	cargo test --release --workspace --exclude rift-program
 
-test: | sync test-contracts test-crates
+test: | build test-contracts test-crates

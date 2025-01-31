@@ -38,12 +38,11 @@ contract RiftExchange is BitcoinLightClient {
     //--------- CONSTRUCTOR ---------//
     constructor(
         bytes32 _mmrRoot,
-        Types.BlockLeaf memory _initialCheckpointLeaf,
         address _depositToken,
         bytes32 _circuitVerificationKey,
         address _verifier,
         address _feeRouter
-    ) BitcoinLightClient(_mmrRoot, _initialCheckpointLeaf) {
+    ) BitcoinLightClient(_mmrRoot) {
         DEPOSIT_TOKEN = IERC20(_depositToken);
         TOKEN_DECIMALS = IERC20Metadata(_depositToken).decimals();
         CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;

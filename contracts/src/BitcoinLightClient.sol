@@ -21,16 +21,13 @@ import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
  */
 abstract contract BitcoinLightClient {
     bytes32 public mmrRoot;
-    Types.BlockLeaf public initialCheckpointLeaf;
 
     /**
-     * @notice Initializes the light client with an MMR root and initial checkpoint
+     * @notice Initializes the light client with an MMR root
      * @param _mmrRoot The initial MMR root
-     * @param _initialCheckpointLeaf The initial checkpoint block leaf
      */
-    constructor(bytes32 _mmrRoot, Types.BlockLeaf memory _initialCheckpointLeaf) {
+    constructor(bytes32 _mmrRoot) {
         mmrRoot = _mmrRoot;
-        initialCheckpointLeaf = _initialCheckpointLeaf;
     }
 
     /**

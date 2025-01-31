@@ -468,7 +468,6 @@ contract RiftTest is Test, PRNG {
 
         exchange = new RiftExchange({
             _mmrRoot: initial_mmr_proof.mmrRoot,
-            _initialCheckpointLeaf: initial_mmr_proof.blockLeaf,
             _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
