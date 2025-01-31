@@ -172,6 +172,8 @@ async fn deploy_contracts(
             get_genesis_leaf().cumulative_chainwork,
         ),
     };
+    // TODO: compute this based on the seeded blocks
+    let genesis_mmr_root = hex!("5da557868f5475897cb308ca463cbcaa17d67ea04b0b099fe1dda086a7d1ccd8");
 
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     info!("Exchange owner address: {}", signer.address());
@@ -202,11 +204,10 @@ async fn deploy_contracts(
     )
     .await?;
 
-    info!("USDC address: {}", token_contract.address());
     let deployment_block_number = provider.get_block_number().await?;
     let contract = RiftExchange::deploy(
         provider.clone(),
-        get_genesis_leaf().hash::<Keccak256Hasher>().into(),
+        genesis_mmr_root.into(),
         block_leaf,
         *token_contract.address(),
         circuit_verification_key_hash.into(),

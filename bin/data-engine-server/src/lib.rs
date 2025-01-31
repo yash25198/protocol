@@ -1,3 +1,4 @@
+use alloy::hex;
 use alloy::primitives::Address;
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use axum::http::Method;
@@ -46,6 +47,10 @@ pub async fn run_server(config: ServerConfig, initial_block_leaf: BlockLeaf) -> 
             .await?;
         println!("Seeded data engine with genesis block leaf...");
     }
+
+    // get the current mmr root
+    let mmr_root = data_engine.indexed_mmr.read().await.get_root().await?;
+    println!("Computed MMR root: {}", hex::encode(mmr_root));
 
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST])

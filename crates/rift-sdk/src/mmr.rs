@@ -423,8 +423,6 @@ impl<H: LeafHasher> IndexedMMR<H> {
                 .map_err(|_| RiftSdkError::MMRError("Invalid hash length".to_string()))?,
             );
 
-        println!("[find_leaf_by_leaf_index]leaf_hash: {:?}", leaf_hash);
-
         // Look up the leaf data in the reverse index
         // if it doesn't exist here, something is wrong so error out
         let reverse_index = match self.reverse_index.get_by_hash(&leaf_hash).await? {
