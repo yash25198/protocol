@@ -98,9 +98,9 @@ async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
     };
 
     // Get a proof for the leaf at `height`
-    let tip_element_index = map_leaf_index_to_element_index(height as usize);
+    let leaf_index = height as usize;
     let circuit_proof = indexed_mmr
-        .get_circuit_proof(tip_element_index, None)
+        .get_circuit_proof(leaf_index, None)
         .await
         .unwrap();
 
@@ -177,9 +177,10 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         height,
         cumulativeChainwork: mock_chainwork_for_height(height),
     };
-    let element_index = map_leaf_index_to_element_index(height as usize);
+
+    let leaf_index = height as usize;
     let proof = indexed_mmr
-        .get_circuit_proof(element_index, None)
+        .get_circuit_proof(leaf_index, None)
         .await
         .unwrap();
 
@@ -189,9 +190,9 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         height: tip_height,
         cumulativeChainwork: mock_chainwork_for_height(tip_height),
     };
-    let tip_element_index = map_leaf_index_to_element_index(tip_height as usize);
+    let tip_leaf_index = tip_height as usize;
     let tip_proof = indexed_mmr
-        .get_circuit_proof(tip_element_index, None)
+        .get_circuit_proof(tip_leaf_index, None)
         .await
         .unwrap();
 
