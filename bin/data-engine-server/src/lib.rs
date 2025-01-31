@@ -93,7 +93,7 @@ struct VirtualSwapQuery {
 #[axum::debug_handler]
 async fn get_swaps_for_address(
     State(data_engine): State<Arc<DataEngine>>,
-    Json(query): Json<VirtualSwapQuery>,
+    axum::extract::Query(query): axum::extract::Query<VirtualSwapQuery>,
 ) -> Result<Json<Vec<OTCSwap>>, (axum::http::StatusCode, String)> {
     let swaps = data_engine
         .get_virtual_swaps(query.address, query.page, None)
