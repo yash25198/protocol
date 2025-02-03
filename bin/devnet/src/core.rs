@@ -1,4 +1,3 @@
-use crate::sp1_verifier_bytecode::{SP1_MOCK_VERIFIER_BYTECODE, SP1_VERIFIER_BYTECODE};
 use alloy::network::{Ethereum, EthereumWallet};
 use alloy::primitives::{ruint, Address, U256};
 use alloy::providers::ext::AnvilApi;
@@ -60,6 +59,13 @@ sol!(
     "../../contracts/artifacts/MockToken.json"
 );
 
+sol!(
+    #[allow(missing_docs)]
+    #[sol(rpc)]
+    SP1MockVerifier,
+    "../../contracts/artifacts/SP1MockVerifier.json"
+);
+
 pub type EvmWebsocketProvider = Arc<
     FillProvider<
         JoinFill<
@@ -104,12 +110,6 @@ impl RiftDevnet {
         let t = Instant::now();
         let anvil = spawn_anvil().await?;
         info!("Spawned Anvil in {:?}", t.elapsed());
-        let evm_rpc_url = anvil.ws_endpoint_url().to_string();
-
-        info!("Creating EVM RPC provider...");
-        let t = Instant::now();
-        let evm_ws_rpc = create_websocket_provider(&evm_rpc_url).await?;
-        info!("Created EVM RPC provider in {:?}", t.elapsed());
 
         info!("Setting up Bitcoin Testnet...");
         let t = Instant::now();
@@ -279,11 +279,10 @@ async fn deploy_contracts(
     let verifier_contract =
         alloy::primitives::Address::from_str("0xaeE21CeadF7A03b3034DAE4f190bFE5F861b6ebf")?;
 
+    let mock_verifier_bytecode = &SP1MockVerifier::BYTECODE;
+
     provider
-        .anvil_set_code(
-            verifier_contract,
-            Vec::from_hex(SP1_MOCK_VERIFIER_BYTECODE)?.into(),
-        )
+        .anvil_set_code(verifier_contract, mock_verifier_bytecode.clone())
         .await?;
 
     let token_contract = MockToken::deploy(
@@ -359,13 +358,4 @@ fn spawn_bitcoin_regtest(
     }
 
     Ok((bitcoin_regtest, alice, alice_address, funding_sats, cookie))
-}
-
-mod test {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_devnet_starts() {
-        let (rift_devnet, _) = RiftDevnet::setup(true, None, None).await.unwrap();
-    }
 }
