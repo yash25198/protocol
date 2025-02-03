@@ -25,7 +25,8 @@ use bitcoin_light_client_core::mmr::{CompactMerkleMountainRange, MMRProof};
 use bitcoin_light_client_core::{validate_chainwork, BlockPosition, ChainTransition};
 
 use accumulators::mmr::{
-    element_index_to_leaf_index, elements_count_to_leaf_count, Proof as ClientMMRProof,
+    element_index_to_leaf_index, elements_count_to_leaf_count, map_leaf_index_to_element_index,
+    Proof as ClientMMRProof,
 };
 use accumulators::{
     hasher::keccak::KeccakHasher as ClientKeccakHasher, mmr::MMR as ClientMMR,
@@ -218,10 +219,12 @@ async fn extend_with_bch_blocks(
         .get(&previous_tip_leaf.height)
         .unwrap();
 
+    let previous_tip_leaf_index = element_index_to_leaf_index(previous_tip_element_index).unwrap();
+
     // real mmr proof
     let previous_tip_proof = state
         .indexed_mmr
-        .get_circuit_proof(previous_tip_element_index, None)
+        .get_circuit_proof(previous_tip_leaf_index, None)
         .await
         .unwrap();
 
@@ -254,15 +257,19 @@ async fn create_bch_overwrite_chain_transition(
 
     // 3) We now fetch real proofs for the parent and parent_retarget as well
     //    (they were set in BchOverwriteMMRState).
+
+    let parent_leaf_index = element_index_to_leaf_index(state.parent_element_index).unwrap();
     let parent_inclusion_proof = state
         .indexed_mmr
-        .get_circuit_proof(state.parent_element_index, None)
+        .get_circuit_proof(parent_leaf_index, None)
         .await
         .unwrap();
 
+    let parent_retarget_leaf_index =
+        element_index_to_leaf_index(state.parent_retarget_element_index).unwrap();
     let parent_retarget_inclusion_proof = state
         .indexed_mmr
-        .get_circuit_proof(state.parent_retarget_element_index, None)
+        .get_circuit_proof(parent_retarget_leaf_index, None)
         .await
         .unwrap();
 
@@ -427,7 +434,8 @@ async fn main() {
     let prover_client = ProverClient::from_env();
     let (pk, _vk) = prover_client.setup(RIFT_PROGRAM_ELF);
 
-    for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
+    // for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
+    for &n in &[1, 10, 100] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
         let result = prove_bch_overwrite(n, benchmark_type, &prover_client, &pk).await;
         println!("Result: {:?}", result);
