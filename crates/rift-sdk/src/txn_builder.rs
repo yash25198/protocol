@@ -12,9 +12,19 @@ use bitcoin::{
     transaction, Address, Amount, CompressedPublicKey, Network, OutPoint, PrivateKey, Script,
     ScriptBuf, Sequence, TxOut, Txid,
 };
+use bitcoincore_rpc_async::bitcoin::hashes::Hash;
+use tokio::time::Instant;
 
+use crate::errors::{Result, RiftSdkError};
+use bitcoin_light_client_core::leaves::BlockLeaf;
+use bitcoincore_rpc_async::jsonrpc::Transport;
+use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
+use futures::stream::TryStreamExt;
+use futures::{stream, StreamExt};
 use rift_core::types::DepositVault;
+use std::ops::Deref;
 use std::str::FromStr;
+use std::time::Duration;
 
 pub struct P2WPKHBitcoinWallet {
     pub secret_key: SecretKey,
@@ -35,7 +45,7 @@ impl P2WPKHBitcoinWallet {
         }
     }
 
-    pub fn from_secret_key(secret_key: [u8; 32], network: Network) -> Self {
+    pub fn from_secret_bytes(secret_key: [u8; 32], network: Network) -> Self {
         let secret_key = SecretKey::from_slice(&secret_key).unwrap();
         let secp = Secp256k1::new();
         let pk = PrivateKey::new(secret_key, network);

@@ -15,6 +15,7 @@ use rift_sdk::{create_websocket_provider, DatabaseLocation};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Clone, Parser)]
@@ -27,52 +28,87 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-pub async fn run_server(config: ServerConfig, initial_block_leaf: BlockLeaf) -> Result<()> {
-    let provider = create_websocket_provider(&config.evm_rpc_websocket_url).await?;
+/// DataEngineServer holds the underlying data engine, starting the Axum server in the background.
+/// It provides a getter method for easy access to the inner engine.
+pub struct DataEngineServer {
+    data_engine: Arc<DataEngine>,
+    pub server_handle: JoinHandle<()>,
+}
 
-    let data_engine = DataEngine::start(
-        config.database_location,
-        Arc::new(provider),
-        config.rift_exchange_address,
-        config.deploy_block_number,
-    )
-    .await?;
+impl DataEngineServer {
+    /// Spawns an Axum server that serves the API endpoints.
+    ///
+    /// This helper method abstracts the common server startup logic.
+    fn spawn_server(data_engine: Arc<DataEngine>, port: u16) -> JoinHandle<()> {
+        // Build the Axum application.
+        let cors = CorsLayer::new()
+            .allow_methods([Method::GET, Method::POST])
+            .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
+            .allow_origin(allow_rift_exchange_and_localhost());
 
-    if data_engine.get_leaf_count().await? == 0 {
-        data_engine
-            .indexed_mmr
-            .write()
-            .await
-            .append(&initial_block_leaf)
-            .await?;
-        println!("Seeded data engine with genesis block leaf...");
+        let app = Router::new()
+            .route("/swaps", get(get_swaps_for_address))
+            .route("/tip-proof", get(get_tip_proof))
+            .route("/contract-bitcoin-tip", get(get_latest_contract_block))
+            .route("/health", get(health))
+            .layer(cors)
+            .with_state(data_engine.clone());
+
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        tracing::info!("Listening on {}", addr);
+
+        // Spawn the server in a non-blocking fashion.
+        tokio::spawn(async move {
+            if let Err(e) =
+                axum::serve(tokio::net::TcpListener::bind(&addr).await.unwrap(), app).await
+            {
+                tracing::error!("Server error: {:?}", e);
+            }
+        })
     }
 
-    // get the current mmr root
-    let mmr_root = data_engine.indexed_mmr.read().await.get_root().await?;
-    println!("Computed MMR root: {}", hex::encode(mmr_root));
+    /// Asynchronously creates a new DataEngineServer.
+    ///
+    /// This method sets up the data engine. If needed, it seeds
+    /// the underlying MMR with the initial block leaves.
+    /// It then starts the HTTP server on the specified port in a background task.
+    pub async fn start(config: ServerConfig, checkpoint_leaves: Vec<BlockLeaf>) -> Result<Self> {
+        // Create provider and initialize the data engine.
+        let provider = create_websocket_provider(&config.evm_rpc_websocket_url).await?;
+        let data_engine = Arc::new(
+            DataEngine::start(
+                config.database_location,
+                Arc::new(provider),
+                config.rift_exchange_address,
+                config.deploy_block_number,
+                checkpoint_leaves,
+            )
+            .await?,
+        );
 
-    let cors = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST])
-        .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
-        .allow_origin(allow_rift_exchange_and_localhost());
+        let server_handle = Self::spawn_server(data_engine.clone(), config.port);
+        Ok(Self {
+            data_engine,
+            server_handle,
+        })
+    }
 
-    let app = Router::new()
-        .route("/swaps", get(get_swaps_for_address))
-        .route("/tip-proof", get(get_tip_proof))
-        .route("/contract-bitcoin-tip", get(get_latest_contract_block))
-        .route("/health", get(health))
-        .layer(cors)
-        .with_state(Arc::new(data_engine));
+    /// Creates a new DataEngineServer from an existing Arc<DataEngine> and the provided port.
+    ///
+    /// This variant accepts a pre-configured DataEngine and immediately starts
+    /// the HTTP server on the specified port in a background task.
+    pub async fn from_engine(data_engine: Arc<DataEngine>, port: u16) -> Result<Self> {
+        let server_handle = Self::spawn_server(data_engine.clone(), port);
+        Ok(Self {
+            data_engine,
+            server_handle,
+        })
+    }
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
-    tracing::info!("Listening on {}", addr);
-
-    axum::serve(tokio::net::TcpListener::bind(&addr).await?, app)
-        .await
-        .map_err(|e| eyre::eyre!(e))?;
-
-    Ok(())
+    /// Returns a clone of the inner `Arc<DataEngine>`.
+    pub fn engine(&self) -> Arc<DataEngine> {
+        self.data_engine.clone()
+    }
 }
 
 fn allow_rift_exchange_and_localhost() -> tower_http::cors::AllowOrigin {

@@ -6,16 +6,16 @@ use tokio::signal;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// List of addresses to use
-    #[arg(short, long, value_delimiter = ',')]
-    addresses: Option<Vec<String>>,
+    /// Address to fund with cbBTC and Ether
+    #[arg(short, long)]
+    evm_address: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
-    let devnet = RiftDevnet::setup(args.addresses).await?;
+    let (devnet, _) = RiftDevnet::setup(true, args.evm_address, None).await?;
     signal::ctrl_c().await?;
     drop(devnet);
     Ok(())

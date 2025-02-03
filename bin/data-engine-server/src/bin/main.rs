@@ -2,8 +2,10 @@ use bitcoin_light_client_core::leaves::get_genesis_leaf;
 use clap::Parser;
 use eyre::Result;
 
-use data_engine_server::run_server;
+use data_engine::engine::DataEngine;
+use data_engine_server::DataEngineServer;
 use data_engine_server::ServerConfig;
+use rift_sdk::DatabaseLocation;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,6 +19,8 @@ async fn main() -> Result<()> {
 
     // Parse CLI args
     let config = ServerConfig::parse();
-    let initial_block_leaf = get_genesis_leaf();
-    run_server(config, initial_block_leaf).await
+    let checkpoint_leaves = vec![get_genesis_leaf()];
+    let data_engine_server = DataEngineServer::start(config, checkpoint_leaves).await?;
+    data_engine_server.server_handle.await?;
+    Ok(())
 }

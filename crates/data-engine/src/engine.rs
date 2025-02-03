@@ -2,7 +2,7 @@ use alloy::{
     primitives::Address,
     providers::{Provider, WsConnect},
     pubsub::{ConnectionHandle, PubSubConnect, PubSubFrontend},
-    rpc::types::{BlockNumberOrTag, Filter},
+    rpc::types::{BlockNumberOrTag, Filter, Log},
     sol_types::SolEvent,
     transports::{impl_future, TransportResult},
 };
@@ -19,8 +19,11 @@ use rift_sdk::mmr::IndexedMMR;
 use rift_sdk::{bindings::RiftExchange, DatabaseLocation};
 
 use std::{path::PathBuf, str::FromStr, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::{info, warn};
+
+// Added for idempotency tracking.
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::db::{
     add_deposit, add_proposed_swap, get_proposed_swap_id, get_virtual_swaps, setup_swaps_database,
@@ -28,18 +31,19 @@ use crate::db::{
 };
 use crate::models::OTCSwap;
 
-#[derive(Clone)]
 pub struct DataEngine {
     pub indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
+    // New field to track if the event listener has been started already.
+    server_started: Arc<AtomicBool>,
+    pub event_listener_handle: Option<JoinHandle<()>>,
 }
 
 impl DataEngine {
-    pub async fn start(
+    /// Seeds the DataEngine with the provided checkpoint leaves, but does not start the event listener.
+    pub async fn seed(
         database_location: DatabaseLocation,
-        provider: Arc<dyn Provider<PubSubFrontend>>,
-        rift_exchange_address: String,
-        deploy_block_number: u64,
+        checkpoint_leaves: Vec<BlockLeaf>,
     ) -> Result<Self> {
         let indexed_mmr = Arc::new(RwLock::new(
             IndexedMMR::open(database_location.clone()).await?,
@@ -50,11 +54,57 @@ impl DataEngine {
                 tokio_rusqlite::Connection::open(get_qualified_swaps_database_path(path)).await?
             }
         });
+
         setup_swaps_database(&swap_database_connection).await?;
 
-        let indexed_mmr_clone = indexed_mmr.clone();
-        let swap_database_connection_clone = swap_database_connection.clone();
-        tokio::spawn(async move {
+        Self::conditionally_seed_mmr(&indexed_mmr, checkpoint_leaves).await?;
+
+        println!("DataEngine seeded with checkpoint leaves.");
+
+        Ok(Self {
+            indexed_mmr,
+            swap_database_connection,
+            server_started: Arc::new(AtomicBool::new(false)),
+            event_listener_handle: None,
+        })
+    }
+
+    /// Seeds the DataEngine and immediately starts the event listener.
+    /// Internally this uses seed() and then start_server().
+    pub async fn start(
+        database_location: DatabaseLocation,
+        provider: Arc<dyn Provider<PubSubFrontend>>,
+        rift_exchange_address: String,
+        deploy_block_number: u64,
+        checkpoint_leaves: Vec<BlockLeaf>,
+    ) -> Result<Self> {
+        // Seed the engine with checkpoint leaves.
+        let mut engine = Self::seed(database_location, checkpoint_leaves).await?;
+        // Start event listener
+        engine
+            .start_event_listener(provider, rift_exchange_address, deploy_block_number)
+            .await?;
+
+        Ok(engine)
+    }
+
+    /// Starts the event listener server by passing the remaining configuration.
+    /// This method will only spawn the event listener once.
+    pub async fn start_event_listener(
+        &mut self,
+        provider: Arc<dyn Provider<PubSubFrontend>>,
+        rift_exchange_address: String,
+        deploy_block_number: u64,
+    ) -> Result<()> {
+        // If the server is already started, return an error.
+        if self.server_started.swap(true, Ordering::SeqCst) {
+            return Err(eyre::eyre!("Server already started"));
+        }
+
+        let indexed_mmr_clone = self.indexed_mmr.clone();
+        let swap_database_connection_clone = self.swap_database_connection.clone();
+
+        let handle = tokio::spawn(async move {
             listen_for_events(
                 provider,
                 &swap_database_connection_clone,
@@ -66,10 +116,24 @@ impl DataEngine {
             .expect("listen_for_events failed");
         });
 
-        Ok(Self {
-            indexed_mmr,
-            swap_database_connection,
-        })
+        self.event_listener_handle = Some(handle);
+
+        Ok(())
+    }
+
+    async fn conditionally_seed_mmr(
+        indexed_mmr: &Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+        checkpoint_leaves: Vec<BlockLeaf>,
+    ) -> Result<()> {
+        if indexed_mmr.read().await.get_leaf_count().await? == 0 && !checkpoint_leaves.is_empty() {
+            indexed_mmr
+                .write()
+                .await
+                .batch_append(&checkpoint_leaves)
+                .await?;
+            println!("Seeded data engine with checkpoint leaves...");
+        }
+        Ok(())
     }
 
     pub async fn get_virtual_swaps(
@@ -112,7 +176,7 @@ fn get_qualified_swaps_database_path(database_location: String) -> String {
     swaps_db_path.to_str().expect("Invalid path").to_string()
 }
 
-// This will run infinitely
+// This will run indefinitely
 pub async fn listen_for_events(
     provider: Arc<dyn Provider<PubSubFrontend>>,
     db_conn: &Arc<tokio_rusqlite::Connection>,
@@ -123,118 +187,177 @@ pub async fn listen_for_events(
     let rift_exchange_address = Address::from_str(rift_exchange_address)?;
     let filter = Filter::new()
         .address(rift_exchange_address)
-        // TODO: Grab the latest block analyzed in the db, put that here
-        // TODO: Consider how the add-to-db functions will behave if sent duplicate entries
         .from_block(BlockNumberOrTag::Number(deploy_block_number));
 
     let sub = provider.subscribe_logs(&filter).await?;
     let mut stream = sub.into_stream();
 
     while let Some(log) = stream.next().await {
-        match log.topic0() {
-            Some(&RiftExchange::VaultUpdated::SIGNATURE_HASH) => {
-                if let Ok(decoded) = RiftExchange::VaultUpdated::decode_log(&log.inner, false) {
-                    info!("Received VaultUpdated event...");
-                    let deposit_vault = decoded.data.vault;
-                    let log_txid = log.transaction_hash.expect("txid should be present");
-                    let log_block_number =
-                        log.block_number.expect("block number should be present");
-                    let log_block_hash = log.block_hash.expect("block hash should be present");
+        // If there's no topic then that's a critical error.
+        let topic = log
+            .topic0()
+            .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
 
-                    // route depending on context event
-                    match VaultUpdateContext::try_from(decoded.data.context)
-                        .expect("context decoding succeeds")
-                    {
-                        VaultUpdateContext::Created => {
-                            info!("Creating deposit for nonce: {:?}", deposit_vault.nonce.0);
-                            add_deposit(
-                                &db_conn,
-                                deposit_vault,
-                                log_block_number,
-                                log_block_hash.into(),
-                                log_txid.into(),
-                            )
-                            .await
-                            .expect("add_deposit failed");
-                        }
-                        VaultUpdateContext::Withdraw => {
-                            info!("Withdrawing deposit for nonce: {:?}", deposit_vault.nonce.0);
-                            update_deposit_to_withdrawn(
-                                &db_conn,
-                                deposit_vault.nonce.0,
-                                log_txid.into(),
-                                log_block_number,
-                                log_block_hash.into(),
-                            )
-                            .await
-                            .expect("update_deposit_to_withdrawn failed");
-                        }
-                        _ => {}
-                    }
-                }
+        match *topic {
+            RiftExchange::VaultUpdated::SIGNATURE_HASH => {
+                handle_vault_updated_event(&log, db_conn).await?;
             }
-            Some(&RiftExchange::SwapUpdated::SIGNATURE_HASH) => {
-                if let Ok(decoded) = RiftExchange::SwapUpdated::decode_log(&log.inner, false) {
-                    info!("Received SwapUpdated event");
-                    let log_txid = log.transaction_hash.expect("txid should be present");
-                    let log_block_number =
-                        log.block_number.expect("block number should be present");
-                    let log_block_hash = log.block_hash.expect("block hash should be present");
-
-                    match SwapUpdateContext::try_from(decoded.data.context)
-                        .expect("context decoding succeeds")
-                    {
-                        SwapUpdateContext::Created => {
-                            info!(
-                                "Received SwapUpdated event: proposed_swap_id = {:?}",
-                                get_proposed_swap_id(&decoded.data.swap)
-                            );
-                            add_proposed_swap(
-                                &db_conn,
-                                &decoded.data.swap,
-                                log_block_number,
-                                log_block_hash.into(),
-                                log_txid.into(),
-                            )
-                            .await
-                            .expect("add_proposed_swap failed");
-                        }
-                        SwapUpdateContext::Complete => {
-                            update_proposed_swap_to_released(
-                                &db_conn,
-                                get_proposed_swap_id(&decoded.data.swap),
-                                log_txid.into(),
-                                log_block_number,
-                                log_block_hash.into(),
-                            )
-                            .await
-                            .expect("update_proposed_swap_to_released failed");
-                        }
-                        _ => {}
-                    }
-                }
+            RiftExchange::SwapUpdated::SIGNATURE_HASH => {
+                handle_swap_updated_event(&log, db_conn).await?;
             }
-            Some(&RiftExchange::BlockTreeUpdated::SIGNATURE_HASH) => {
-                info!("Received BlockTreeUpdated event");
-                let block_tree_updated =
-                    RiftExchange::BlockTreeUpdated::decode_log(&log.inner, false)
-                        .expect("decoding succeeds");
-                let block_tree_root = block_tree_updated.data.treeRoot.0;
-                let compressed_block_leaves =
-                    block_tree_updated.data.compressedBlockLeaves.0.to_vec();
-                // decode the compressed block leaves
-                let block_leaves = decompress_block_leaves(&compressed_block_leaves);
-                // add the block leaves to the db
-                {
-                    let mut mmr = indexed_mmr.write().await;
-                    mmr.append_or_reorg_based_on_parent(&block_leaves).await?;
-                }
-                // calculate the root as a sanity check
-                let root = indexed_mmr.read().await.get_root().await?;
-                assert_eq!(root, block_tree_root);
+            RiftExchange::BlockTreeUpdated::SIGNATURE_HASH => {
+                handle_block_tree_updated_event(&log, indexed_mmr.clone()).await?;
             }
-            _ => warn!("Unknown event topic"),
+            _ => {
+                warn!("Unknown event topic");
+            }
         }
+    }
+
+    Ok(())
+}
+
+async fn handle_vault_updated_event(
+    log: &Log,
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+) -> Result<()> {
+    info!("Received VaultUpdated event...");
+
+    // Propagate any decoding error.
+    let decoded = RiftExchange::VaultUpdated::decode_log(&log.inner, false)
+        .map_err(|e| eyre::eyre!("Failed to decode VaultUpdated event: {:?}", e))?;
+
+    let deposit_vault = decoded.data.vault;
+    let log_txid = log
+        .transaction_hash
+        .ok_or_else(|| eyre::eyre!("Missing txid in VaultUpdated event"))?;
+    let log_block_number = log
+        .block_number
+        .ok_or_else(|| eyre::eyre!("Missing block number in VaultUpdated event"))?;
+    let log_block_hash = log
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("Missing block hash in VaultUpdated event"))?;
+
+    match VaultUpdateContext::try_from(decoded.data.context)
+        .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
+    {
+        VaultUpdateContext::Created => {
+            info!("Creating deposit for nonce: {:?}", deposit_vault.nonce.0);
+            add_deposit(
+                db_conn,
+                deposit_vault,
+                log_block_number,
+                log_block_hash.into(),
+                log_txid.into(),
+            )
+            .await
+            .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
+        }
+        VaultUpdateContext::Withdraw => {
+            info!("Withdrawing deposit for nonce: {:?}", deposit_vault.nonce.0);
+            update_deposit_to_withdrawn(
+                db_conn,
+                deposit_vault.nonce.0,
+                log_txid.into(),
+                log_block_number,
+                log_block_hash.into(),
+            )
+            .await
+            .map_err(|e| eyre::eyre!("update_deposit_to_withdrawn failed: {:?}", e))?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+async fn handle_swap_updated_event(
+    log: &Log,
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+) -> Result<()> {
+    info!("Received SwapUpdated event");
+
+    // Propagate any decoding error.
+    let decoded = RiftExchange::SwapUpdated::decode_log(&log.inner, false)
+        .map_err(|e| eyre::eyre!("Failed to decode SwapUpdated event: {:?}", e))?;
+
+    let log_txid = log
+        .transaction_hash
+        .ok_or_else(|| eyre::eyre!("Missing txid in SwapUpdated event"))?;
+    let log_block_number = log
+        .block_number
+        .ok_or_else(|| eyre::eyre!("Missing block number in SwapUpdated event"))?;
+    let log_block_hash = log
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("Missing block hash in SwapUpdated event"))?;
+
+    match SwapUpdateContext::try_from(decoded.data.context)
+        .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
+    {
+        SwapUpdateContext::Created => {
+            info!(
+                "Received SwapUpdated event: proposed_swap_id = {:?}",
+                get_proposed_swap_id(&decoded.data.swap)
+            );
+            add_proposed_swap(
+                db_conn,
+                &decoded.data.swap,
+                log_block_number,
+                log_block_hash.into(),
+                log_txid.into(),
+            )
+            .await
+            .map_err(|e| eyre::eyre!("add_proposed_swap failed: {:?}", e))?;
+        }
+        SwapUpdateContext::Complete => {
+            update_proposed_swap_to_released(
+                db_conn,
+                get_proposed_swap_id(&decoded.data.swap),
+                log_txid.into(),
+                log_block_number,
+                log_block_hash.into(),
+            )
+            .await
+            .map_err(|e| eyre::eyre!("update_proposed_swap_to_released failed: {:?}", e))?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_block_tree_updated_event(
+    log: &Log,
+    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+) -> Result<()> {
+    info!("Received BlockTreeUpdated event");
+
+    // Propagate any decoding error.
+    let decoded = RiftExchange::BlockTreeUpdated::decode_log(&log.inner, false)
+        .map_err(|e| eyre::eyre!("Failed to decode BlockTreeUpdated event: {:?}", e))?;
+
+    let block_tree_data = &decoded.data;
+    let block_tree_root = block_tree_data.treeRoot.0;
+    let compressed_block_leaves = block_tree_data.compressedBlockLeaves.0.to_vec();
+    let block_leaves = decompress_block_leaves(&compressed_block_leaves);
+
+    {
+        let mut mmr = indexed_mmr.write().await;
+        mmr.append_or_reorg_based_on_parent(&block_leaves)
+            .await
+            .map_err(|e| eyre::eyre!("append_or_reorg_based_on_parent failed: {:?}", e))?;
+    }
+    let root = indexed_mmr
+        .read()
+        .await
+        .get_root()
+        .await
+        .map_err(|e| eyre::eyre!("get_root failed: {:?}", e))?;
+    if root != block_tree_root {
+        return Err(eyre::eyre!(
+            "Root mismatch: computed {:?} but expected {:?}",
+            root,
+            block_tree_root
+        ));
     }
 
     Ok(())

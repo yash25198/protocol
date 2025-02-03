@@ -19,6 +19,9 @@ pub enum RiftSdkError {
 
     #[error("Failed to create websocket provider: {0}")]
     WebsocketProviderError(String),
+
+    #[error("Failed to get block: {0}")]
+    GetBlockError(String),
 }
 
 pub type Result<T> = std::result::Result<T, RiftSdkError>;

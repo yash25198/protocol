@@ -69,6 +69,8 @@ tempfile = { version = "3.6.0" }
 
 alloy-sol-types = { version = "0.8.0", features = ["json"] }
 alloy = { version = "0.8.0", features = ["full", "node-bindings", "json"] }
+async-trait = "0.1.86"
+reqwest = { version = "0.12.12", features = ["json"] }
 
 
 eyre = "0.6.12"
@@ -79,10 +81,14 @@ chrono = "0.4.38"
 futures = "0.3.30"
 futures-util = "0.3.30"
 backoff = { version = "0.4.0", features=["tokio"] }
-
+corepc-node = { version = "0.5.0", features = ["download"] }
+bitcoincore-rpc-async = "3.0.1"
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0-rc.3" }
 sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0-rc.3" }
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0-rc.3" }
+bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1" }
+secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-4.0.0-rc.3" }
+secp256k1-sys = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-4.0.0-rc.3" }
 

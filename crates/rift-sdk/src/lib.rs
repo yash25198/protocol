@@ -1,8 +1,9 @@
 pub mod bindings;
-pub mod mmr;
-pub mod transaction;
-
+pub mod bitcoin_utils;
 mod errors;
+pub mod mmr;
+pub mod txn_builder;
+
 use alloy::providers::{ProviderBuilder, WsConnect};
 use alloy::pubsub::{ConnectionHandle, PubSubConnect};
 use alloy::rpc::client::ClientBuilder;
@@ -16,7 +17,6 @@ use alloy::{
 };
 use backoff::exponential::ExponentialBackoff;
 use bitcoin::hashes::hex::FromHex;
-use bitcoin::hashes::Hash;
 use bitcoin_light_client_core::{
     hasher::{Digest, Keccak256Hasher},
     leaves::{decompress_block_leaves, BlockLeaf},
