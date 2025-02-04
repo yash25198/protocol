@@ -192,7 +192,6 @@ impl RpcApi for AsyncBitcoinClient {
         args: &[serde_json::Value],
     ) -> bitcoincore_rpc_async::Result<T> {
         for i in 0..RETRY_ATTEMPTS {
-            println!("Calling patched CALL attempt {}", i);
             match self.client.call(cmd, args).await {
                 Ok(ret) => return Ok(ret),
                 Err(bitcoincore_rpc_async::Error::JsonRpc(
@@ -236,7 +235,6 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             let t = Instant::now();
 
             let block_hash = self.get_block_hash(height as u64).await;
-            println!("Got block hash in {:?}", t.elapsed());
             let block_hash = block_hash.map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!(
                     "Error getting block hash for height {} {}",
@@ -246,7 +244,6 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
             let t = Instant::now();
             let block = self.get_block_header_info(&block_hash).await;
-            println!("Got block header info in {:?}", t.elapsed());
             let block = block.map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!(
                     "Error getting block header info for height {} {}",

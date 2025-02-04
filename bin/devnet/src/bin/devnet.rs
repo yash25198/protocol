@@ -1,10 +1,11 @@
 use clap::Parser;
-use devnet::core::RiftDevnet;
+use devnet::RiftDevnet;
 use eyre::Result;
+use log::info;
 use tokio::signal;
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about)]
 struct Args {
     /// Address to fund with cbBTC and Ether
     #[arg(short, long)]
@@ -14,8 +15,17 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
+    info!("Running devnet...");
     let args = Args::parse();
-    let (devnet, _) = RiftDevnet::setup(true, args.evm_address, None).await?;
+
+    let (devnet, _funding_sats) = RiftDevnet::setup(
+        true,             // interactive
+        args.evm_address, // an optional EVM address to fund
+        None,
+    )
+    .await?;
+
+    // Wait for Ctrl+C
     signal::ctrl_c().await?;
     drop(devnet);
     Ok(())
