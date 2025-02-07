@@ -8,7 +8,7 @@ use bitcoincore_rpc_async::jsonrpc::{Request, Response};
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
-use rift_core::types::DepositVault;
+use sol_types::Types::DepositVault;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::time::Duration;

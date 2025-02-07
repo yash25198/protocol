@@ -21,7 +21,7 @@ bitcoincore-rpc-async = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
 reqwest = {workspace = true } 
-
+sol-types = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

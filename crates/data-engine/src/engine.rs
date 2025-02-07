@@ -202,7 +202,7 @@ pub async fn listen_for_events(
             RiftExchange::VaultUpdated::SIGNATURE_HASH => {
                 handle_vault_updated_event(&log, db_conn).await?;
             }
-            RiftExchange::SwapUpdated::SIGNATURE_HASH => {
+            RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
                 handle_swap_updated_event(&log, db_conn).await?;
             }
             RiftExchange::BlockTreeUpdated::SIGNATURE_HASH => {
@@ -242,7 +242,7 @@ async fn handle_vault_updated_event(
         .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
     {
         VaultUpdateContext::Created => {
-            info!("Creating deposit for nonce: {:?}", deposit_vault.nonce.0);
+            info!("Creating deposit for index: {:?}", deposit_vault.vaultIndex);
             add_deposit(
                 db_conn,
                 deposit_vault,
@@ -254,10 +254,13 @@ async fn handle_vault_updated_event(
             .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
         }
         VaultUpdateContext::Withdraw => {
-            info!("Withdrawing deposit for nonce: {:?}", deposit_vault.nonce.0);
+            info!(
+                "Withdrawing deposit for nonce: {:?}",
+                deposit_vault.vaultIndex
+            );
             update_deposit_to_withdrawn(
                 db_conn,
-                deposit_vault.nonce.0,
+                deposit_vault.salt.into(),
                 log_txid.into(),
                 log_block_number,
                 log_block_hash.into(),
@@ -278,7 +281,7 @@ async fn handle_swap_updated_event(
     info!("Received SwapUpdated event");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::SwapUpdated::decode_log(&log.inner, false)
+    let decoded = RiftExchange::SwapsUpdated::decode_log(&log.inner, false)
         .map_err(|e| eyre::eyre!("Failed to decode SwapUpdated event: {:?}", e))?;
 
     let log_txid = log
@@ -295,30 +298,34 @@ async fn handle_swap_updated_event(
         .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
     {
         SwapUpdateContext::Created => {
-            info!(
-                "Received SwapUpdated event: proposed_swap_id = {:?}",
-                get_proposed_swap_id(&decoded.data.swap)
-            );
-            add_proposed_swap(
-                db_conn,
-                &decoded.data.swap,
-                log_block_number,
-                log_block_hash.into(),
-                log_txid.into(),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("add_proposed_swap failed: {:?}", e))?;
+            for swap in decoded.data.swaps {
+                info!(
+                    "Received SwapUpdated event: proposed_swap_id = {:?}",
+                    get_proposed_swap_id(&swap)
+                );
+                add_proposed_swap(
+                    db_conn,
+                    &swap,
+                    log_block_number,
+                    log_block_hash.into(),
+                    log_txid.into(),
+                )
+                .await
+                .map_err(|e| eyre::eyre!("add_proposed_swap failed: {:?}", e))?;
+            }
         }
         SwapUpdateContext::Complete => {
-            update_proposed_swap_to_released(
-                db_conn,
-                get_proposed_swap_id(&decoded.data.swap),
-                log_txid.into(),
-                log_block_number,
-                log_block_hash.into(),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("update_proposed_swap_to_released failed: {:?}", e))?;
+            for swap in decoded.data.swaps {
+                update_proposed_swap_to_released(
+                    db_conn,
+                    get_proposed_swap_id(&swap),
+                    log_txid.into(),
+                    log_block_number,
+                    log_block_hash.into(),
+                )
+                .await
+                .map_err(|e| eyre::eyre!("update_proposed_swap_to_released failed: {:?}", e))?;
+            }
         }
         _ => {}
     }

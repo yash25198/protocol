@@ -1,6 +1,7 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
+use alloy_sol_types::SolValue;
 use rift_core::giga::RiftProgramInput;
 
 pub fn main() {
@@ -10,9 +11,9 @@ pub fn main() {
     let circuit_input = sp1_zkvm::io::read::<RiftProgramInput>();
 
     // Verify the input and build the public input
-    let public_input = circuit_input.verify_input();
+    let public_input = circuit_input.verify();
 
     // Commit to the public values of the program. The final proof will have a commitment to all the
     // bytes that were committed to.
-    sp1_zkvm::io::commit_slice(&public_input.contract_serialize());
+    sp1_zkvm::io::commit_slice(&public_input.abi_encode());
 }

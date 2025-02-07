@@ -2,139 +2,89 @@
 
 pub mod payments;
 pub mod spv;
-pub mod types;
 pub mod vaults;
 
 use crate::spv::{generate_bitcoin_txn_hash, verify_bitcoin_txn_merkle_proof, MerkleProofStep};
-use crate::vaults::validate_aggregate_vault_commitment;
 
 use crate::payments::validate_bitcoin_payment;
-use crate::types::DepositVault;
 
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::Hash;
 use bitcoin_core_rs::get_block_hash;
 use bitcoin_light_client_core::light_client::Header;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RiftTransactionPublicInput {
-    pub aggregate_vault_commitment: [u8; 32],
-    pub block_hash: [u8; 32],
-}
-
-impl RiftTransactionPublicInput {
-    pub fn contract_serialize_length() -> usize {
-        64
-    }
-
-    pub fn contract_serialize(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::contract_serialize_length());
-        bytes.extend_from_slice(&self.aggregate_vault_commitment);
-        bytes.extend_from_slice(&self.block_hash);
-        bytes
-    }
-
-    pub fn contract_deserialize(bytes: &[u8]) -> Self {
-        assert!(bytes.len() == Self::contract_serialize_length());
-        let mut aggregate_vault_commitment = [0u8; 32];
-        let mut block_hash = [0u8; 32];
-        aggregate_vault_commitment.copy_from_slice(&bytes[..32]);
-        block_hash.copy_from_slice(&bytes[32..]);
-        Self {
-            aggregate_vault_commitment,
-            block_hash,
-        }
-    }
-}
+use sol_types::Types::{
+    DepositVault, LightClientPublicInput, ProofPublicInput, ProofType, SwapPublicInput,
+};
+use vaults::hash_deposit_vault;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RiftTransaction {
     // no segwit data serialized bitcoin transaction
     pub txn: Vec<u8>,
     // the vaults reserved for this transaction
-    pub reserved_vaults: Vec<DepositVault>,
-    // the aggregate vault commitment of the reserved vaults (passed from public input)
-    pub aggregate_vault_commitment: [u8; 32],
+    pub reserved_vault: DepositVault,
     // block header where the txn is included
     pub block_header: Header,
-    // block hash (passed from public input)
-    pub block_hash: [u8; 32],
     // merkle proof of the txn hash in the block
     pub txn_merkle_proof: Vec<MerkleProofStep>,
 }
 
 impl RiftTransaction {
-    pub fn public_input(&self) -> RiftTransactionPublicInput {
-        RiftTransactionPublicInput {
-            aggregate_vault_commitment: self.aggregate_vault_commitment,
-            block_hash: self.block_hash,
+    pub fn verify(&self) -> SwapPublicInput {
+        let block_header = &self.block_header.as_bytes();
+
+        // [0] Validate Bitcoin merkle proof of the transaction hash
+        let block_header_merkle_root = deserialize::<bitcoin::block::Header>(block_header)
+            .expect("Failed to deserialize block header")
+            .merkle_root
+            .to_raw_hash()
+            .to_byte_array();
+
+        let txn_hash = generate_bitcoin_txn_hash(&self.txn);
+        verify_bitcoin_txn_merkle_proof(block_header_merkle_root, txn_hash, &self.txn_merkle_proof);
+
+        // [1] Validate Bitcoin payment given the reserved deposit vault
+
+        let vault_commitment = hash_deposit_vault(&self.reserved_vault);
+        validate_bitcoin_payment(&self.txn, &self.reserved_vault, &vault_commitment);
+
+        // [2] Construct the public input, bitcoin block hash and txid are reversed to align with network byte order
+        let mut block_hash =
+            get_block_hash(&self.block_header.0).expect("Failed to get block hash");
+
+        block_hash.reverse();
+
+        let mut txid = txn_hash;
+        txid.reverse();
+
+        SwapPublicInput {
+            depositVaultCommitment: vault_commitment.into(),
+            swapBitcoinBlockHash: block_hash.into(),
+            swapBitcoinTxid: txid.into(),
         }
     }
-}
-
-pub fn validate_rift_transaction(rift_txn: RiftTransaction) -> RiftTransactionPublicInput {
-    assert!(!rift_txn.reserved_vaults.is_empty());
-    let block_header = &rift_txn.block_header.as_bytes();
-
-    // [0] Validate the block header
-    assert_eq!(
-        get_block_hash(block_header).expect("Failed to get block hash"),
-        rift_txn.block_hash
-    );
-
-    // [1] Validate Bitcoin merkle proof of the transaction hash
-    let block_header_merkle_root = deserialize::<bitcoin::block::Header>(block_header)
-        .expect("Failed to deserialize block header")
-        .merkle_root
-        .to_raw_hash()
-        .to_byte_array();
-
-    let txn_hash = generate_bitcoin_txn_hash(&rift_txn.txn);
-    verify_bitcoin_txn_merkle_proof(
-        block_header_merkle_root,
-        txn_hash,
-        &rift_txn.txn_merkle_proof,
-    );
-
-    // [2] Validate aggregate vault commitment of the reserved vaults match what is onchain
-    validate_aggregate_vault_commitment(
-        &rift_txn.reserved_vaults,
-        &rift_txn.aggregate_vault_commitment,
-    );
-
-    // [3] Validate Bitcoin payment given the deposit vaults
-    validate_bitcoin_payment(
-        &rift_txn.txn,
-        &rift_txn.reserved_vaults,
-        &rift_txn.aggregate_vault_commitment,
-    );
-
-    rift_txn.public_input()
 }
 
 // Combine Light Client and Rift Transaction "programs"
 pub mod giga {
     use super::*;
-    use bitcoin_light_client_core::{
-        commit_new_chain, hasher::Keccak256Hasher, BitcoinLightClientPublicInput,
-    };
+    use bitcoin_light_client_core::{hasher::Keccak256Hasher, ChainTransition};
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[repr(u8)]
-    pub enum ProofType {
-        LightClient = 0,
-        RiftTransaction = 1,
-        Full = 2,
+    pub enum RustProofType {
+        SwapOnly,
+        LightClientOnly,
+        Combined,
     }
 
-    impl ProofType {
-        pub fn from_u8(value: u8) -> Option<Self> {
-            match value {
-                0 => Some(Self::LightClient),
-                1 => Some(Self::RiftTransaction),
-                2 => Some(Self::Full),
-                _ => None,
+    impl From<ProofType> for RustProofType {
+        fn from(value: ProofType) -> Self {
+            if ProofType::from(0) == value {
+                RustProofType::SwapOnly
+            } else if ProofType::from(1) == value {
+                RustProofType::LightClientOnly
+            } else {
+                RustProofType::Combined
             }
         }
     }
@@ -142,8 +92,8 @@ pub mod giga {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct RiftProgramInput {
         pub proof_type: ProofType,
-        pub light_client_input: bitcoin_light_client_core::ChainTransition,
-        pub rift_transaction_input: RiftTransaction,
+        pub light_client_input: Option<ChainTransition>,
+        pub rift_transaction_input: Option<Vec<RiftTransaction>>,
     }
 
     impl RiftProgramInput {
@@ -156,7 +106,7 @@ pub mod giga {
     pub struct RiftProgramInputBuilder {
         proof_type: Option<ProofType>,
         light_client_input: Option<bitcoin_light_client_core::ChainTransition>,
-        rift_transaction_input: Option<RiftTransaction>,
+        rift_transaction_input: Option<Vec<RiftTransaction>>,
     }
 
     impl RiftProgramInputBuilder {
@@ -173,36 +123,37 @@ pub mod giga {
             self
         }
 
-        pub fn rift_transaction_input(mut self, input: RiftTransaction) -> Self {
+        pub fn rift_transaction_input(mut self, input: Vec<RiftTransaction>) -> Self {
             self.rift_transaction_input = Some(input);
             self
         }
 
         pub fn build(self) -> Result<RiftProgramInput, &'static str> {
             let proof_type = self.proof_type.ok_or("proof_type is required")?;
+            let matchable_proof_type = RustProofType::from(proof_type.clone());
 
-            match proof_type {
-                ProofType::LightClient => {
+            match matchable_proof_type {
+                RustProofType::LightClientOnly => {
                     let light_client_input = self
                         .light_client_input
                         .ok_or("light_client_input is required for LightClient proof type")?;
                     Ok(RiftProgramInput {
                         proof_type,
-                        light_client_input,
-                        rift_transaction_input: RiftTransaction::default(),
+                        light_client_input: Some(light_client_input),
+                        rift_transaction_input: None,
                     })
                 }
-                ProofType::RiftTransaction => {
+                RustProofType::SwapOnly => {
                     let rift_transaction_input = self.rift_transaction_input.ok_or(
                         "rift_transaction_input is required for RiftTransaction proof type",
                     )?;
                     Ok(RiftProgramInput {
                         proof_type,
-                        light_client_input: bitcoin_light_client_core::ChainTransition::default(), // You'll need to implement Default
-                        rift_transaction_input,
+                        light_client_input: None,
+                        rift_transaction_input: Some(rift_transaction_input),
                     })
                 }
-                ProofType::Full => {
+                RustProofType::Combined => {
                     let light_client_input = self
                         .light_client_input
                         .ok_or("light_client_input is required for Full proof type")?;
@@ -211,94 +162,70 @@ pub mod giga {
                         .ok_or("rift_transaction_input is required for Full proof type")?;
                     Ok(RiftProgramInput {
                         proof_type,
-                        light_client_input,
-                        rift_transaction_input,
+                        light_client_input: Some(light_client_input),
+                        rift_transaction_input: Some(rift_transaction_input),
                     })
                 }
             }
         }
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct RiftProgramPublicInput {
-        pub proof_type: ProofType,
-        #[serde(flatten)]
-        pub light_client_public_input: bitcoin_light_client_core::BitcoinLightClientPublicInput,
-        #[serde(flatten)]
-        pub rift_transaction_public_input: RiftTransactionPublicInput,
+    /*
+    pub enum ProofType {
+        SwapOnly,
+        LightClientOnly,
+        Combined,
     }
-
-    impl RiftProgramPublicInput {
-        pub fn contract_serialize_length() -> usize {
-            1 + bitcoin_light_client_core::BitcoinLightClientPublicInput::contract_serialize_length(
-            ) + RiftTransactionPublicInput::contract_serialize_length()
-        }
-
-        pub fn contract_serialize(&self) -> Vec<u8> {
-            let mut bytes = Vec::with_capacity(Self::contract_serialize_length());
-            // Add proof_type as a single byte
-            bytes.push(self.proof_type.clone() as u8);
-            // Add light client public input
-            bytes.extend_from_slice(&self.light_client_public_input.contract_serialize());
-            // Add rift transaction public input
-            bytes.extend_from_slice(&self.rift_transaction_public_input.contract_serialize());
-            bytes
-        }
-
-        pub fn contract_deserialize(bytes: &[u8]) -> Self {
-            assert!(bytes.len() == Self::contract_serialize_length());
-            // First byte is proof_type
-            let proof_type = ProofType::from_u8(bytes[0]).expect("Invalid proof type");
-
-            // Next bytes are light client public input
-            let light_client_public_input =
-                bitcoin_light_client_core::BitcoinLightClientPublicInput::contract_deserialize(
-                    &bytes[1..bitcoin_light_client_core::BitcoinLightClientPublicInput::contract_serialize_length() + 1],
-                );
-
-            // Remaining bytes are rift transaction public input
-            let rift_transaction_public_input = RiftTransactionPublicInput::contract_deserialize(
-                &bytes[bitcoin_light_client_core::BitcoinLightClientPublicInput::contract_serialize_length() + 1..]
-            );
-
-            Self {
-                proof_type,
-                light_client_public_input,
-                rift_transaction_public_input,
-            }
-        }
-    }
-
+    */
     impl RiftProgramInput {
-        pub fn verify_input(self) -> RiftProgramPublicInput {
-            match self.proof_type {
-                ProofType::LightClient => {
-                    let light_client_public_input =
-                        commit_new_chain::<Keccak256Hasher>(self.light_client_input);
-                    RiftProgramPublicInput {
-                        proof_type: self.proof_type,
-                        light_client_public_input,
-                        rift_transaction_public_input: RiftTransactionPublicInput::default(),
+        pub fn verify(self) -> ProofPublicInput {
+            let proof_type = self.proof_type;
+            let matchable_proof_type = RustProofType::from(proof_type.clone());
+
+            match matchable_proof_type {
+                RustProofType::SwapOnly => {
+                    let rift_transaction_public_input = self
+                        .rift_transaction_input
+                        .expect("rift_transaction_input is required for SwapOnly proof type")
+                        .iter()
+                        .map(|rift_transaction| rift_transaction.verify())
+                        .collect();
+
+                    ProofPublicInput {
+                        proofType: proof_type.into(),
+                        lightClient: LightClientPublicInput::default(),
+                        swaps: rift_transaction_public_input,
                     }
                 }
-                ProofType::RiftTransaction => {
-                    let rift_transaction_public_input =
-                        validate_rift_transaction(self.rift_transaction_input);
-                    RiftProgramPublicInput {
-                        proof_type: self.proof_type,
-                        light_client_public_input: BitcoinLightClientPublicInput::default(),
-                        rift_transaction_public_input,
+
+                RustProofType::LightClientOnly => {
+                    let light_client_public_input = self
+                        .light_client_input
+                        .expect("light_client_input is required for LightClientOnly proof type")
+                        .verify::<Keccak256Hasher>();
+
+                    ProofPublicInput {
+                        proofType: proof_type.into(),
+                        lightClient: light_client_public_input,
+                        swaps: Vec::default(),
                     }
                 }
-                ProofType::Full => {
-                    let light_client_public_input =
-                        commit_new_chain::<Keccak256Hasher>(self.light_client_input);
-                    let rift_transaction_public_input =
-                        validate_rift_transaction(self.rift_transaction_input);
-                    RiftProgramPublicInput {
-                        proof_type: self.proof_type,
-                        light_client_public_input,
-                        rift_transaction_public_input,
+                RustProofType::Combined => {
+                    let light_client_public_input = self
+                        .light_client_input
+                        .expect("light_client_input is required for Combined proof type")
+                        .verify::<Keccak256Hasher>();
+                    let rift_transaction_public_input = self
+                        .rift_transaction_input
+                        .expect("rift_transaction_input is required for Combined proof type")
+                        .iter()
+                        .map(|rift_transaction| rift_transaction.verify())
+                        .collect();
+
+                    ProofPublicInput {
+                        proofType: proof_type.into(),
+                        lightClient: light_client_public_input,
+                        swaps: rift_transaction_public_input,
                     }
                 }
             }

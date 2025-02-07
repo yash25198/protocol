@@ -9,6 +9,7 @@ members = [
   "crates/rift-sdk",
   "crates/rift-core", 
   "crates/rift-program",
+  "crates/sol-types",
   "test-data", "bin/test-utils",
   # "integration-tests"
   ]
@@ -24,13 +25,13 @@ exclude = [".github/"]
 
 [workspace.dependencies]
 # Internal dependencies
+sol-types = { path = "crates/sol-types" }
 bitcoin-light-client-core = { path = "crates/bitcoin-light-client-core" }
 rift-core = { path = "crates/rift-core" }
 rift-sdk = { path = "crates/rift-sdk" }
 rift-program = {path = "crates/rift-program"}
 data-engine = { path = "crates/data-engine" }
 test-data-utils = { path = "test-data" }
-
 data-engine-server = { path = "bin/data-engine-server" }
 devnet = {path = "bin/devnet"}
 

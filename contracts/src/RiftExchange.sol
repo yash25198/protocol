@@ -23,19 +23,25 @@ import {BitcoinLightClient} from "./BitcoinLightClient.sol";
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
  */
 contract RiftExchange is BitcoinLightClient {
-    // --------- IMMUTABLES --------- //
+    // -----------------------------------------------------------------------
+    //                                IMMUTABLES
+    // -----------------------------------------------------------------------
     IERC20 public immutable DEPOSIT_TOKEN;
     uint8 public immutable TOKEN_DECIMALS;
     bytes32 public immutable CIRCUIT_VERIFICATION_KEY;
     ISP1Verifier public immutable VERIFIER;
     address public immutable FEE_ROUTER_ADDRESS;
 
-    // --------- STATE --------- //
+    // -----------------------------------------------------------------------
+    //                                 STATE
+    // -----------------------------------------------------------------------
     bytes32[] public vaultCommitments;
     bytes32[] public swapCommitments;
     uint256 public accumulatedFeeBalance;
 
-    //--------- CONSTRUCTOR ---------//
+    // -----------------------------------------------------------------------
+    //                              CONSTRUCTOR
+    // -----------------------------------------------------------------------
     constructor(
         bytes32 _mmrRoot,
         address _depositToken,
@@ -50,10 +56,13 @@ contract RiftExchange is BitcoinLightClient {
         FEE_ROUTER_ADDRESS = _feeRouter;
     }
 
-    //--------- WRITE FUNCTIONS ---------//
+    // -----------------------------------------------------------------------
+    //                             EXTERNAL FUNCTIONS
+    // -----------------------------------------------------------------------
+
     /// @notice Sends accumulated protocol fees to the fee router contract
     /// @dev Reverts if there are no fees to pay or if the transfer fails
-    function payoutToFeeRouter() public {
+    function payoutToFeeRouter() external {
         uint256 feeBalance = accumulatedFeeBalance;
         if (feeBalance == 0) revert Errors.NoFeeToPay();
         accumulatedFeeBalance = 0;
@@ -61,418 +70,302 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Deposits new liquidity into a new vault
-    /// @param specifiedPayoutAddress Address to receive swap proceeds
-    /// @param depositAmount Amount of ERC20 tokens to deposit including fee
-    /// @param expectedSats Expected BTC output in satoshis
-    /// @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
-    /// @param depositSalt User generated salt for vault nonce
-    function depositLiquidity(
-        address specifiedPayoutAddress,
-        uint256 depositAmount,
-        uint64 expectedSats,
-        bytes22 btcPayoutScriptPubKey,
-        bytes32 depositSalt,
-        uint8 confirmationBlocks,
-        Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockSiblings,
-        bytes32[] calldata tipBlockPeaks
-    ) public {
-        // [0] create deposit liquidity request
-        (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(
-            specifiedPayoutAddress,
-            depositAmount,
-            expectedSats,
-            btcPayoutScriptPubKey,
-            vaultCommitments.length,
-            depositSalt,
-            confirmationBlocks,
-            tipBlockLeaf,
-            tipBlockSiblings,
-            tipBlockPeaks
-        );
+    function depositLiquidity(Types.DepositLiquidityParams calldata params) external {
+        // Determine vault index
+        uint256 vaultIndex = vaultCommitments.length;
 
-        // [1] add deposit hash to vault commitments
+        // Create deposit liquidity request
+        (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params, vaultIndex);
+
+        // Add deposit hash to vault commitments
         vaultCommitments.push(depositHash);
 
-        // [2] finalize deposit
+        // Finalize deposit
         _finalizeDeposit(vault);
     }
 
     /// @notice Deposits new liquidity by overwriting an existing empty vault
-    /// @param overwriteVault Existing empty vault to overwrite
-    /// @dev Identical to depositLiquidity, but allows for overwriting an existing empty vault
-    function depositLiquidityWithOverwrite(
-        address specifiedPayoutAddress,
-        uint256 depositAmount,
-        uint64 expectedSats,
-        bytes22 btcPayoutScriptPubKey,
-        bytes32 depositSalt,
-        uint8 confirmationBlocks,
-        Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockSiblings,
-        bytes32[] calldata tipBlockPeaks,
-        Types.DepositVault calldata overwriteVault
-    ) public {
-        // [0] create deposit liquidity request
-        (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(
-            specifiedPayoutAddress,
-            depositAmount,
-            expectedSats,
-            btcPayoutScriptPubKey,
-            overwriteVault.vaultIndex,
-            depositSalt,
-            confirmationBlocks,
-            tipBlockLeaf,
-            tipBlockSiblings,
-            tipBlockPeaks
-        );
+    function depositLiquidityWithOverwrite(Types.DepositLiquidityWithOverwriteParams calldata params) external {
+        // Create deposit liquidity request
+        uint256 vaultIndex = params.overwriteVault.vaultIndex;
+        (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params.depositParams, vaultIndex);
 
-        // [1] ensure passed vault is real and overwritable
-        VaultLib.validateDepositVaultCommitment(overwriteVault, vaultCommitments);
-        if (overwriteVault.depositAmount != 0) revert Errors.DepositVaultNotOverwritable();
+        // Ensure passed vault is real and overwritable
+        VaultLib.validateDepositVaultCommitment(params.overwriteVault, vaultCommitments);
+        if (params.overwriteVault.depositAmount != 0) revert Errors.DepositVaultNotOverwritable();
 
-        // [2] overwrite deposit vault
-        vaultCommitments[overwriteVault.vaultIndex] = depositHash;
+        // Overwrite deposit vault
+        vaultCommitments[vaultIndex] = depositHash;
 
-        // [3] finalize deposit
+        // Finalize deposit
         _finalizeDeposit(vault);
     }
 
-    /// @notice Checks invariants and creates new deposit vault struct
-    /// @dev Validates deposit amounts and creates vault structure
-    /// @return Tuple of the new vault and its commitment hash
-    function _prepareDeposit(
-        address specifiedPayoutAddress,
-        uint256 depositAmount,
-        uint64 expectedSats,
-        bytes22 btcPayoutScriptPubKey,
-        uint256 depositVaultIndex,
-        bytes32 depositSalt,
-        uint8 confirmationBlocks,
-        Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockSiblings,
-        bytes32[] calldata tipBlockPeaks
-    ) internal view returns (Types.DepositVault memory, bytes32) {
-        // [0] ensure deposit amount is greater than min protocol fee
-        if (depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
-
-        // [1] ensure expected sat output is above minimum to prevent dust errors
-        if (expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
-
-        // [2] ensure scriptPubKey is valid
-        if (!VaultLib.validateP2WPKHScriptPubKey(btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
-
-        // [3] ensure tip block is part of the longest chain
-        if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockSiblings, tipBlockPeaks))
-            revert Errors.InvalidTipBlockInclusionProof();
-
-        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(depositAmount);
-
-        Types.DepositVault memory vault = Types.DepositVault({
-            vaultIndex: depositVaultIndex,
-            depositTimestamp: uint64(block.timestamp),
-            depositAmount: depositAmount - depositFee,
-            depositFee: depositFee,
-            expectedSats: expectedSats,
-            btcPayoutScriptPubKey: btcPayoutScriptPubKey,
-            specifiedPayoutAddress: specifiedPayoutAddress,
-            ownerAddress: msg.sender,
-            /// @dev Nonce prevents replay attacks by combining:
-            /// 1. depositSalt - LP-provided entropy, unknown before deposit
-            /// 2. depositVaultIndex - prevents same-block collisions
-            /// 3. chainId - prevents cross-chain collisions
-            /// While a random salt from the LP would be sufficient for security,
-            /// including the vault index and chain ID ensures protocol safety even if
-            /// an LP uses a predictable salt. LPs are incentivized to use random salts
-            /// to protect their own liquidity.
-            nonce: EfficientHashLib.hash(depositSalt, bytes32(depositVaultIndex), bytes32(uint256(block.chainid))),
-            confirmationBlocks: confirmationBlocks,
-            attestedBitcoinBlockHeight: tipBlockLeaf.height
-        });
-        return (vault, VaultLib.hashDepositVault(vault));
-    }
-
-    /// @notice Completes deposit by emitting event and transferring tokens
-    function _finalizeDeposit(Types.DepositVault memory vault) internal {
-        emit Events.VaultUpdated(vault, Types.VaultUpdateContext.Created);
-        if (!DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee))
-            revert Errors.TransferFailed();
-    }
-
     /// @notice Withdraws liquidity from a deposit vault after the lockup period
-    /// @param vault The deposit vault to withdraw from
     /// @dev Anyone can call, reverts if vault doesn't exist, is empty, or still in lockup period
-    function withdrawLiquidity(Types.DepositVault calldata vault) public {
-        // [0] validate deposit vault exists
+    function withdrawLiquidity(Types.DepositVault calldata vault) external {
         VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
-
-        // [1] ensure deposit amount is non-zero
         if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
-
-        // [2] ensure the deposit vault is not time locked
-        if (block.timestamp < vault.depositTimestamp + Constants.DEPOSIT_LOCKUP_PERIOD)
+        // TODO: lock up period needs to be a function how many confirmation blocks the deposit is locked for
+        // TODO: should be possible to create a deposit vault on behalf of another address
+        if (block.timestamp < vault.depositTimestamp + Constants.DEPOSIT_LOCKUP_PERIOD) {
             revert Errors.DepositStillLocked();
+        }
 
-        // [3] update deposit vault commitment
         Types.DepositVault memory updatedVault = vault;
         updatedVault.depositAmount = 0;
         updatedVault.depositFee = 0;
-        bytes32 updatedVaultHash = VaultLib.hashDepositVault(updatedVault);
-        vaultCommitments[vault.vaultIndex] = updatedVaultHash;
 
-        // [4] transfer funds to vault owner
-        if (!DEPOSIT_TOKEN.transfer(vault.ownerAddress, vault.depositAmount)) {
-            revert Errors.TransferFailed();
-        }
+        vaultCommitments[vault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
+
+        if (!DEPOSIT_TOKEN.transfer(vault.ownerAddress, vault.depositAmount)) revert Errors.TransferFailed();
 
         emit Events.VaultUpdated(updatedVault, Types.VaultUpdateContext.Withdraw);
     }
 
-    /// @notice Internal function to prepare and validate a new swap
-    /// @return swap The prepared swap struct
-    /// @return updatedSwapHash The hash of the prepared swap
-    function _validateSwap(
-        uint256 swapIndex,
-        bytes32 swapBitcoinBlockHash,
-        bytes32 swapBitcoinTxid,
-        Types.DepositVault calldata vault,
-        bytes32 priorMmrRoot,
-        bytes32 newMmrRoot,
-        bytes calldata proof,
-        bytes calldata compressedBlockLeaves,
-        Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockSiblings,
-        bytes32[] calldata tipBlockPeaks
-    ) internal returns (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) {
-        // [0] Validate various parameters align with what requested makers have set (this could be done in circuit)
-        uint64 oldestDepositorAttestedBitcoinBlockHeight = vault.attestedBitcoinBlockHeight;
-
-        (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vault);
-
-        // [1] create deposit vault commitment, while doing so validate that the vaults hash to
-        // their commitments
-        bytes32 aggregateVaultCommitment = VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
-
-        // [2] create compressed leaves commitment
-        bytes32 compressedLeavesCommitment = EfficientHashLib.hash(compressedBlockLeaves);
-
-        // [3] craft public inputs and verify proof
-        bytes memory publicInputs = abi.encode(
-            Types.SwapProofPublicInputs({
-                confirmationBlocks: vault.confirmationBlocks,
-                swapBitcoinBlockHash: swapBitcoinBlockHash,
-                swapBitcoinTxid: swapBitcoinTxid,
-                aggregateVaultCommitment: aggregateVaultCommitment,
-                specifiedPayoutAddress: vault.specifiedPayoutAddress,
-                totalSwapFee: totalSwapFee,
-                totalSwapOutput: totalSwapOutput,
-                previousMmrRoot: priorMmrRoot,
-                newMmrRoot: newMmrRoot,
-                compressedLeavesCommitment: compressedLeavesCommitment
-            })
+    /// @notice Submits a a batch of swap proofs and adds them to swapCommitments or overwrites an existing completed swap commitment
+    function submitBatchSwapProof(
+        Types.SubmitSwapProofParams[] calldata swapParams,
+        Types.BlockProofParams calldata blockProofParams,
+        Types.ProposedSwap[] calldata overwriteSwaps,
+        bytes calldata proof
+    ) external {
+        (Types.ProposedSwap[] memory swaps, bytes32[] memory updatedSwapHashes) = _validateSwaps(
+            swapParams,
+            blockProofParams,
+            overwriteSwaps,
+            proof
         );
 
-        VERIFIER.verifyProof(CIRCUIT_VERIFICATION_KEY, publicInputs, proof);
-        _updateRoot(priorMmrRoot, newMmrRoot, compressedBlockLeaves);
-
-        if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockSiblings, tipBlockPeaks))
-            revert Errors.InvalidTipBlockInclusionProof();
-
-        // [4] calculate block delta
-        uint64 attestedBitcoinBlockHeightDelta = tipBlockLeaf.height - oldestDepositorAttestedBitcoinBlockHeight;
-
-        // [5] create the new swap
-        swap = Types.ProposedSwap({
-            swapIndex: swapIndex,
-            aggregateVaultCommitment: aggregateVaultCommitment,
-            swapBitcoinBlockHash: swapBitcoinBlockHash,
-            confirmationBlocks: vault.confirmationBlocks,
-            liquidityUnlockTimestamp: uint64(
-                block.timestamp + RiftUtils.calculateChallengePeriod(attestedBitcoinBlockHeightDelta)
-            ),
-            specifiedPayoutAddress: vault.specifiedPayoutAddress,
-            totalSwapFee: totalSwapFee,
-            totalSwapOutput: totalSwapOutput,
-            state: Types.SwapState.Proved,
-            depositVaultNonce: vault.nonce
-        });
-
-        updatedSwapHash = VaultLib.hashSwap(swap);
-    }
-
-    /// @notice Submits a new swap proof and adds it to swapCommitments
-    /// @param swapBitcoinTxid Txid of the Bitcoin transaction containing the swap
-    /// @param swapBitcoinBlockHash Hash of the Bitcoin block containing the swap
-    /// @param vault Deposit vault being used in the swap
-    /// @param priorMmrRoot Previous MMR root used to generate this swap proof
-    /// @param newMmrRoot Updated MMR root at least incluing up to the confirmation block
-    /// @param proof ZK proof validating the swap
-    /// @param compressedBlockLeaves Compressed block data for MMR Data Availability
-    function submitSwapProof(
-        bytes32 swapBitcoinTxid,
-        bytes32 swapBitcoinBlockHash,
-        Types.DepositVault calldata vault,
-        bytes32 priorMmrRoot,
-        bytes32 newMmrRoot,
-        bytes calldata proof,
-        bytes calldata compressedBlockLeaves,
-        Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockSiblings,
-        bytes32[] calldata tipBlockPeaks
-    ) public {
-        // [0] validate swap proof
-        (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) = _validateSwap(
-            swapCommitments.length,
-            swapBitcoinBlockHash,
-            swapBitcoinTxid,
-            vault,
-            priorMmrRoot,
-            newMmrRoot,
-            proof,
-            compressedBlockLeaves,
-            tipBlockLeaf,
-            tipBlockSiblings,
-            tipBlockPeaks
-        );
-
-        // [1] update swap commitments with updated swap hash
-        swapCommitments.push(updatedSwapHash);
-        emit Events.SwapUpdated(swap, Types.SwapUpdateContext.Created);
-    }
-
-    /// @notice Same as submitSwapProof but overwrites an existing completed swap commitment
-    /// @param overwriteSwap Existing completed swap to overwrite
-    /// @dev All other parameters are identical to submitSwapProof
-    function submitSwapProofWithOverwrite(
-        bytes32 swapBitcoinBlockHash,
-        bytes32 swapBitcoinTxid,
-        Types.DepositVault calldata vault,
-        bytes32 priorMmrRoot,
-        bytes32 newMmrRoot,
-        bytes calldata proof,
-        bytes calldata compressedBlockLeaves,
-        Types.BlockLeaf calldata tipBlockLeaf,
-        bytes32[] calldata tipBlockSiblings,
-        bytes32[] calldata tipBlockPeaks,
-        Types.ProposedSwap calldata overwriteSwap
-    ) public {
-        // [0] validate overwrite swap exists and is completed
-        VaultLib.validateSwapCommitment(overwriteSwap, swapCommitments);
-        if (overwriteSwap.state != Types.SwapState.Completed) revert Errors.CannotOverwriteOnGoingSwap();
-
-        // [1] validate swap proof
-        (Types.ProposedSwap memory swap, bytes32 updatedSwapHash) = _validateSwap(
-            overwriteSwap.swapIndex,
-            swapBitcoinBlockHash,
-            swapBitcoinTxid,
-            vault,
-            priorMmrRoot,
-            newMmrRoot,
-            proof,
-            compressedBlockLeaves,
-            tipBlockLeaf,
-            tipBlockSiblings,
-            tipBlockPeaks
-        );
-
-        // [2] update swap commitments with updated swap hash
-        swapCommitments[overwriteSwap.swapIndex] = updatedSwapHash;
-        emit Events.SwapUpdated(swap, Types.SwapUpdateContext.Created);
-    }
-
-    function releaseLiquidity(
-        Types.ProposedSwap calldata swap,
-        uint256 swapBlockChainwork,
-        uint32 swapBlockHeight,
-        bytes32[] calldata bitcoinSwapBlockSiblings,
-        bytes32[] calldata bitcoinSwapBlockPeaks,
-        Types.BlockLeaf calldata bitcoinConfirmationBlockLeaf,
-        bytes32[] calldata bitcoinConfirmationBlockSiblings,
-        bytes32[] calldata bitcoinConfirmationBlockPeaks,
-        Types.DepositVault calldata utilizedVault,
-        uint32 tipBlockHeight
-    ) public {
-        // [0] validate swaps exists
-        VaultLib.validateSwapCommitment(swap, swapCommitments);
-
-        // [1] validate swap has been proved
-        if (swap.state != Types.SwapState.Proved) {
-            revert Errors.SwapNotProved();
+        for (uint256 i = 0; i < swaps.length; i++) {
+            swapCommitments.push(updatedSwapHashes[i]);
         }
+        emit Events.SwapsUpdated(swaps, Types.SwapUpdateContext.Created);
+    }
 
-        // [2] ensure challenge period has passed since proof submission
-        if (block.timestamp < swap.liquidityUnlockTimestamp) {
-            revert Errors.StillInChallengePeriod();
-        }
+    /// @notice Releases locked liquidity to the swap taker after the challenge period
+    function releaseLiquidity(Types.ReleaseLiquidityParams calldata params) external {
+        VaultLib.validateSwapCommitment(params.swap, swapCommitments);
+        if (params.swap.state != Types.SwapState.Proved) revert Errors.SwapNotProved();
+        if (block.timestamp < params.swap.liquidityUnlockTimestamp) revert Errors.StillInChallengePeriod();
 
         Types.BlockLeaf memory swapBlockLeaf = Types.BlockLeaf({
-            blockHash: swap.swapBitcoinBlockHash,
-            height: swapBlockHeight,
-            cumulativeChainwork: swapBlockChainwork
+            blockHash: params.swap.swapBitcoinBlockHash,
+            height: params.swapBlockHeight,
+            cumulativeChainwork: params.swapBlockChainwork
         });
-
-        // [3] ensure swap block is part of longest chain
-        if (!_proveBlockInclusion(swapBlockLeaf, bitcoinSwapBlockSiblings, bitcoinSwapBlockPeaks, tipBlockHeight))
-            revert Errors.InvalidSwapBlockInclusionProof();
-
-        // [4] ensure the supposed confirmation block is part of the longest chain
         if (
             !_proveBlockInclusion(
-                bitcoinConfirmationBlockLeaf,
-                bitcoinConfirmationBlockSiblings,
-                bitcoinConfirmationBlockPeaks,
-                tipBlockHeight
+                swapBlockLeaf,
+                params.bitcoinSwapBlockSiblings,
+                params.bitcoinSwapBlockPeaks,
+                params.tipBlockHeight
             )
-        ) revert Errors.InvalidConfirmationBlockInclusionProof();
+        ) {
+            revert Errors.InvalidSwapBlockInclusionProof();
+        }
 
-        // [5] ensure the confirmation block delta is what the maker expects
-        if (bitcoinConfirmationBlockLeaf.height != swapBlockHeight + swap.confirmationBlocks)
+        if (
+            !_proveBlockInclusion(
+                params.bitcoinConfirmationBlockLeaf,
+                params.bitcoinConfirmationBlockSiblings,
+                params.bitcoinConfirmationBlockPeaks,
+                params.tipBlockHeight
+            )
+        ) {
+            revert Errors.InvalidConfirmationBlockInclusionProof();
+        }
+
+        if (params.bitcoinConfirmationBlockLeaf.height != params.swapBlockHeight + params.swap.confirmationBlocks) {
             revert Errors.InvalidConfirmationBlockDelta();
+        }
 
-        // [6] ensure all utilized vaults hash to the aggregate vault commitment
-        bytes32 aggregateVaultCommitmentHash = VaultLib.validateDepositVaultCommitment(utilizedVault, vaultCommitments);
-        // [7] the aggregate vault commitment must be the same as when it was originally created
-        if (aggregateVaultCommitmentHash != swap.aggregateVaultCommitment) revert Errors.InvalidVaultCommitment();
+        bytes32 depositVaultCommitment = VaultLib.validateDepositVaultCommitment(
+            params.utilizedVault,
+            vaultCommitments
+        );
+        if (depositVaultCommitment != params.swap.depositVaultCommitment) {
+            revert Errors.InvalidVaultCommitment();
+        }
 
-        // [8] empty deposit amount for utilized vault
-        Types.DepositVault memory updatedVault = utilizedVault;
+        Types.DepositVault memory updatedVault = params.utilizedVault;
         updatedVault.depositAmount = 0;
         updatedVault.depositFee = 0;
+
         vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
         emit Events.VaultUpdated(updatedVault, Types.VaultUpdateContext.Release);
 
-        // [9] update completed swap hash
-        Types.ProposedSwap memory updatedSwap = swap;
-        updatedSwap.state = Types.SwapState.Completed;
-        bytes32 updatedSwapHash = VaultLib.hashSwap(updatedSwap);
-        swapCommitments[swap.swapIndex] = updatedSwapHash;
+        Types.ProposedSwap memory updatedSwap = params.swap;
+        updatedSwap.state = Types.SwapState.Finalized;
+        swapCommitments[params.swap.swapIndex] = VaultLib.hashSwap(updatedSwap);
 
-        // [10] add protocol fee to accumulated fee balance
-        accumulatedFeeBalance += swap.totalSwapFee;
+        accumulatedFeeBalance += params.swap.totalSwapFee;
 
-        // [11] emit swap updated
-        emit Events.SwapUpdated(updatedSwap, Types.SwapUpdateContext.Complete);
+        Types.ProposedSwap[] memory updatedSwaps = new Types.ProposedSwap[](1);
+        updatedSwaps[0] = updatedSwap;
 
-        // [12] release funds to buyers ETH payout address
-        // TODO: Use a safe erc20 transfer library
-        if (!DEPOSIT_TOKEN.transfer(swap.specifiedPayoutAddress, swap.totalSwapOutput)) revert Errors.TransferFailed();
+        emit Events.SwapsUpdated(updatedSwaps, Types.SwapUpdateContext.Complete);
+
+        if (!DEPOSIT_TOKEN.transfer(params.swap.specifiedPayoutAddress, params.swap.totalSwapOutput)) {
+            revert Errors.TransferFailed();
+        }
     }
 
-    //--------- READ FUNCTIONS ---------//
+    // -----------------------------------------------------------------------
+    //                            INTERNAL FUNCTIONS
+    // -----------------------------------------------------------------------
 
-    function getVaultCommitmentsLength() public view returns (uint256) {
+    /// @notice Internal function to prepare and validate a new deposit
+    function _prepareDeposit(
+        Types.DepositLiquidityParams calldata params,
+        uint256 depositVaultIndex
+    ) internal view returns (Types.DepositVault memory, bytes32) {
+        if (params.depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
+        if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
+        if (!VaultLib.validateP2WPKHScriptPubKey(params.btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
+
+        if (!_proveBlockInclusionAtTip(params.tipBlockLeaf, params.tipBlockSiblings, params.tipBlockPeaks)) {
+            revert Errors.InvalidTipBlockInclusionProof();
+        }
+
+        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(params.depositAmount);
+
+        Types.DepositVault memory vault = Types.DepositVault({
+            vaultIndex: depositVaultIndex,
+            depositTimestamp: uint64(block.timestamp),
+            depositAmount: params.depositAmount - depositFee,
+            depositFee: depositFee,
+            expectedSats: params.expectedSats,
+            btcPayoutScriptPubKey: params.btcPayoutScriptPubKey,
+            specifiedPayoutAddress: params.specifiedPayoutAddress,
+            ownerAddress: msg.sender,
+            salt: EfficientHashLib.hash(
+                params.depositSalt,
+                bytes32(depositVaultIndex),
+                bytes32(uint256(block.chainid))
+            ),
+            confirmationBlocks: params.confirmationBlocks,
+            attestedBitcoinBlockHeight: params.tipBlockLeaf.height
+        });
+
+        return (vault, VaultLib.hashDepositVault(vault));
+    }
+
+    // TODO: add function to do pure block updates
+
+    /// @notice Internal function to finalize a deposit
+    function _finalizeDeposit(Types.DepositVault memory vault) internal {
+        emit Events.VaultUpdated(vault, Types.VaultUpdateContext.Created);
+        if (!DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee)) {
+            revert Errors.TransferFailed();
+        }
+    }
+
+    /// @notice Internal function to prepare and validate a batch of swap proofs
+    function _validateSwaps(
+        Types.SubmitSwapProofParams[] calldata swapParams,
+        Types.BlockProofParams calldata blockProofParams,
+        Types.ProposedSwap[] calldata overwriteSwaps,
+        bytes calldata proof
+    ) internal returns (Types.ProposedSwap[] memory swaps, bytes32[] memory updatedSwapHashes) {
+        // if (swapParams.length == 0) revert Errors.NoSwapsToSubmit();
+        // TODO: explicit check for uint16 overflow on max swaps?
+        Types.SwapPublicInput[] memory swapPublicInputs = new Types.SwapPublicInput[](swapParams.length);
+        swaps = new Types.ProposedSwap[](swapParams.length);
+        updatedSwapHashes = new bytes32[](swapParams.length);
+
+        uint256 swapIndexPointer = swapCommitments.length;
+        for (uint256 i = 0; i < swapParams.length; i++) {
+            uint256 swapIndex = swapIndexPointer; // default is append
+            Types.SubmitSwapProofParams calldata params = swapParams[i];
+            if (params.storageStrategy == Types.StorageStrategy.Append) {
+                swapIndexPointer++;
+            } else if (params.storageStrategy == Types.StorageStrategy.Overwrite) {
+                VaultLib.validateSwapCommitment(overwriteSwaps[params.localOverwriteIndex], swapCommitments);
+                if (overwriteSwaps[params.localOverwriteIndex].state != Types.SwapState.Finalized) {
+                    revert Errors.CannotOverwriteOngoingSwap();
+                }
+                swapIndex = overwriteSwaps[params.localOverwriteIndex].swapIndex;
+            }
+
+            (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(params.vault);
+            bytes32 depositVaultCommitment = VaultLib.validateDepositVaultCommitment(params.vault, vaultCommitments);
+
+            swapPublicInputs[i] = Types.SwapPublicInput({
+                swapBitcoinBlockHash: params.swapBitcoinBlockHash,
+                swapBitcoinTxid: params.swapBitcoinTxid,
+                depositVaultCommitment: depositVaultCommitment
+            });
+
+            swaps[i] = Types.ProposedSwap({
+                swapIndex: swapIndex,
+                swapBitcoinBlockHash: params.swapBitcoinBlockHash,
+                confirmationBlocks: params.vault.confirmationBlocks,
+                liquidityUnlockTimestamp: uint64(
+                    block.timestamp +
+                        RiftUtils.calculateChallengePeriod(
+                            // The challenge period is based on the worst case reorg which would be to the
+                            // depositors originally attested bitcoin block height
+                            blockProofParams.tipBlockLeaf.height - params.vault.attestedBitcoinBlockHeight
+                        )
+                ),
+                specifiedPayoutAddress: params.vault.specifiedPayoutAddress,
+                totalSwapFee: totalSwapFee,
+                totalSwapOutput: totalSwapOutput,
+                state: Types.SwapState.Proved,
+                depositVaultCommitment: depositVaultCommitment
+            });
+
+            updatedSwapHashes[i] = VaultLib.hashSwap(swaps[i]);
+        }
+
+        if (
+            !_proveBlockInclusionAtTip(
+                blockProofParams.tipBlockLeaf,
+                blockProofParams.tipBlockSiblings,
+                blockProofParams.tipBlockPeaks
+            )
+        ) {
+            revert Errors.InvalidTipBlockInclusionProof();
+        }
+
+        bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
+
+        VERIFIER.verifyProof(
+            CIRCUIT_VERIFICATION_KEY,
+            abi.encode(
+                Types.ProofPublicInput({
+                    proofType: Types.ProofType.Combined,
+                    swaps: swapPublicInputs,
+                    lightClient: Types.LightClientPublicInput({
+                        previousMmrRoot: blockProofParams.priorMmrRoot,
+                        newMmrRoot: blockProofParams.newMmrRoot,
+                        compressedLeavesCommitment: compressedLeavesCommitment
+                    })
+                })
+            ),
+            proof
+        );
+        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.compressedBlockLeaves);
+    }
+
+    // -----------------------------------------------------------------------
+    //                              READ FUNCTIONS
+    // -----------------------------------------------------------------------
+
+    function getVaultCommitmentsLength() external view returns (uint256) {
         return vaultCommitments.length;
     }
 
-    function getSwapCommitmentsLength() public view returns (uint256) {
+    function getSwapCommitmentsLength() external view returns (uint256) {
         return swapCommitments.length;
     }
 
-    function getVaultCommitment(uint256 vaultIndex) public view returns (bytes32) {
+    function getVaultCommitment(uint256 vaultIndex) external view returns (bytes32) {
         return vaultCommitments[vaultIndex];
     }
 
-    function getSwapCommitment(uint256 swapIndex) public view returns (bytes32) {
+    function getSwapCommitment(uint256 swapIndex) external view returns (bytes32) {
         return swapCommitments[swapIndex];
     }
 }

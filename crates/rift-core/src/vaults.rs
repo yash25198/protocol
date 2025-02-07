@@ -1,6 +1,6 @@
 // Effectively a Rust impl of `contracts/src/libraries/CommitmentVerificationLib.sol`
-use crate::DepositVault;
 use alloy_sol_types::SolType;
+use sol_types::Types::DepositVault;
 use tiny_keccak::{Hasher, Keccak};
 
 pub fn hash_deposit_vault(vault: &DepositVault) -> [u8; 32] {
@@ -12,34 +12,6 @@ pub fn hash_deposit_vault(vault: &DepositVault) -> [u8; 32] {
     hasher.update(&abi_encoded);
     hasher.finalize(&mut output);
     output
-}
-
-pub fn generate_aggregate_vault_commitment(vaults: &[DepositVault]) -> [u8; 32] {
-    let mut vault_hashes: Vec<[u8; 32]> = Vec::with_capacity(vaults.len());
-
-    for vault in vaults {
-        vault_hashes.push(hash_deposit_vault(vault));
-    }
-
-    let mut hasher = Keccak::v256();
-    let mut output = [0u8; 32];
-
-    // concatenating a list of [u8; 32] is the same as abi.encode(vault_hashes)
-    let abi_encoded = vault_hashes.concat();
-    hasher.update(&abi_encoded);
-    hasher.finalize(&mut output);
-    output
-}
-
-pub fn validate_aggregate_vault_commitment(
-    vaults: &[DepositVault],
-    aggregate_vault_commitment: &[u8; 32],
-) {
-    assert!(!vaults.is_empty());
-    assert_eq!(
-        generate_aggregate_vault_commitment(vaults),
-        *aggregate_vault_commitment
-    )
 }
 
 #[cfg(test)]
@@ -58,7 +30,7 @@ mod tests {
     fn test_hash_single_deposit_vault() {
         /*
          */
-        let vault = DepositVault {
+        let vault = DepositVaultSol {
             vaultIndex: U256::from(16669_u64),
             depositTimestamp: 4077_u64,
             depositAmount: U256::from(14833_u64),
@@ -85,7 +57,7 @@ mod tests {
 
     #[test]
     fn test_generate_aggregate_vault_commitment_single_vault() {
-        let vaults = vec![DepositVault {
+        let vaults = vec![DepositVaultSol {
             vaultIndex: U256::from(5264_u64),
             depositTimestamp: 4736_u64,
             depositAmount: U256::from(963_u64),
@@ -112,7 +84,7 @@ mod tests {
     #[test]
     fn test_validate_aggregate_vault_commitment_multiple_vaults() {
         let vaults = vec![
-            DepositVault {
+            DepositVaultSol {
                 vaultIndex: U256::from(8033_u64),
                 depositTimestamp: 87_u64,
                 depositAmount: U256::from(2991_u64),
@@ -132,7 +104,7 @@ mod tests {
                 )),
                 confirmationBlocks: 93_u8,
             },
-            DepositVault {
+            DepositVaultSol {
                 vaultIndex: U256::from(18717_u64),
                 depositTimestamp: 18581_u64,
                 depositAmount: U256::from(5892_u64),

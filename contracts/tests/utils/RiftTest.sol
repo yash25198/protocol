@@ -562,10 +562,10 @@ contract RiftTest is Test, PRNG {
         revert("Vault not found");
     }
 
-    function _extractSwapFromLogs(Vm.Log[] memory logs) internal pure returns (Types.ProposedSwap memory) {
+    function _extractSingleSwapFromLogs(Vm.Log[] memory logs) internal pure returns (Types.ProposedSwap memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.SwapUpdated.selector) {
-                return abi.decode(logs[i].data, (Types.ProposedSwap));
+            if (logs[i].topics[0] == Events.SwapsUpdated.selector) {
+                return abi.decode(logs[i].data, (Types.ProposedSwap[]))[0];
             }
         }
         revert("Swap not found");
@@ -589,7 +589,7 @@ contract RiftTest is Test, PRNG {
 
         // [3] test deposit
         vm.recordLogs();
-        exchange.depositLiquidity({
+        Types.DepositLiquidityParams memory args = Types.DepositLiquidityParams({
             specifiedPayoutAddress: address(this),
             depositAmount: depositAmount,
             expectedSats: expectedSats,
@@ -600,6 +600,8 @@ contract RiftTest is Test, PRNG {
             tipBlockSiblings: mmr_proof.siblings,
             tipBlockPeaks: mmr_proof.peaks
         });
+
+        exchange.depositLiquidity(args);
 
         // [4] grab the logs, find the vault
         Types.DepositVault memory createdVault = _extractVaultFromLogs(vm.getRecordedLogs());

@@ -11,9 +11,9 @@ library Types {
 
     // --------- EXCHANGE SETTLEMENT TYPES --------- //
     enum SwapState {
-        None,
+        Pending,
         Proved,
-        Completed
+        Finalized
     }
 
     struct DepositVault {
@@ -21,7 +21,7 @@ library Types {
         uint64 depositTimestamp;
         // this is the amount of capital actually available to be swapped
         uint256 depositAmount;
-        // this is the fee the maker will pay
+        // this is the fee the maker and taker will pay
         uint256 depositFee;
         // this is the amount of BTC the maker will need to receive
         // for their liquidity to be unlocked.
@@ -31,15 +31,14 @@ library Types {
         bytes22 btcPayoutScriptPubKey;
         address specifiedPayoutAddress;
         address ownerAddress;
-        bytes32 nonce;
+        bytes32 salt;
         uint8 confirmationBlocks;
         uint64 attestedBitcoinBlockHeight;
     }
 
     struct ProposedSwap {
         uint256 swapIndex;
-        bytes32 aggregateVaultCommitment;
-        bytes32 depositVaultNonce;
+        bytes32 depositVaultCommitment;
         bytes32 swapBitcoinBlockHash;
         // number of Bitcoin block confirmations required after the swap transaction
         // (e.g., 1 = only the block containing the swap, 2 = swap block + 1 confirmation, etc.)
@@ -53,19 +52,30 @@ library Types {
         SwapState state;
     }
 
-    struct SwapProofPublicInputs {
-        // rift swap verification
-        uint8 confirmationBlocks;
-        bytes32 swapBitcoinBlockHash;
+    enum ProofType {
+        SwapOnly,
+        LightClientOnly,
+        Combined
+    }
+
+    struct SwapPublicInput {
         bytes32 swapBitcoinTxid; // not strictly necessary to be public, but useful for tracking the swap
-        bytes32 aggregateVaultCommitment;
-        address specifiedPayoutAddress;
-        uint256 totalSwapFee;
-        uint256 totalSwapOutput;
-        // bitcoin light client verification
+        bytes32 swapBitcoinBlockHash;
+        bytes32 depositVaultCommitment;
+    }
+
+    struct LightClientPublicInput {
         bytes32 previousMmrRoot;
         bytes32 newMmrRoot;
         bytes32 compressedLeavesCommitment;
+    }
+
+    struct ProofPublicInput {
+        ProofType proofType;
+        // rift swap verification
+        SwapPublicInput[] swaps;
+        // bitcoin light client verification
+        LightClientPublicInput lightClient;
     }
 
     enum VaultUpdateContext {
@@ -90,5 +100,121 @@ library Types {
     struct ReleaseMMRProof {
         MMRProof proof;
         MMRProof tipProof;
+    }
+
+    // -----------------------------------------------------------------------
+    //                             PARAMETER STRUCTS
+    // -----------------------------------------------------------------------
+
+    /**
+     * @notice Struct for depositLiquidity parameters
+     *
+     * @param specifiedPayoutAddress Address to receive swap proceeds
+     * @param depositAmount Amount of ERC20 tokens to deposit including fee
+     * @param expectedSats Expected BTC output in satoshis
+     * @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
+     * @param depositSalt User generated salt for vault nonce
+     * @param confirmationBlocks Number of Bitcoin blocks required for confirmation
+     * @param tipBlockLeaf The leaf node representing the current tip block
+     * @param tipBlockSiblings Merkle proof siblings for tip block inclusion
+     * @param tipBlockPeaks MMR peaks for tip block inclusion
+     */
+    struct DepositLiquidityParams {
+        address specifiedPayoutAddress;
+        uint256 depositAmount;
+        uint64 expectedSats;
+        bytes22 btcPayoutScriptPubKey;
+        bytes32 depositSalt;
+        uint8 confirmationBlocks;
+        Types.BlockLeaf tipBlockLeaf;
+        bytes32[] tipBlockSiblings;
+        bytes32[] tipBlockPeaks;
+    }
+
+    /**
+     * @notice Struct for depositLiquidityWithOverwrite parameters
+     *
+     * @param specifiedPayoutAddress Address to receive swap proceeds
+     * @param depositAmount Amount of ERC20 tokens to deposit including fee
+     * @param expectedSats Expected BTC output in satoshis
+     * @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
+     * @param depositSalt User generated salt for vault nonce
+     * @param confirmationBlocks Number of Bitcoin blocks required for confirmation
+     * @param tipBlockLeaf The leaf node representing the current tip block
+     * @param tipBlockSiblings Merkle proof siblings for tip block inclusion
+     * @param tipBlockPeaks MMR peaks for tip block inclusion
+     * @param overwriteVault Existing empty vault to overwrite
+     */
+    struct DepositLiquidityWithOverwriteParams {
+        DepositLiquidityParams depositParams;
+        Types.DepositVault overwriteVault;
+    }
+
+    /**
+     * @notice Struct for block proof parameters
+     *
+     * @param priorMmrRoot Previous MMR root used to generate this swap proof
+     * @param newMmrRoot Updated MMR root at least incluing up to the confirmation block
+     * @param compressedBlockLeaves Compressed block data for MMR Data Availability
+     * @param tipBlockLeaf The leaf node representing the current tip block
+     * @param tipBlockSiblings Merkle proof siblings for tip block inclusion
+     * @param tipBlockPeaks MMR peaks for tip block inclusion
+     */
+    struct BlockProofParams {
+        bytes32 priorMmrRoot;
+        bytes32 newMmrRoot;
+        bytes compressedBlockLeaves;
+        Types.BlockLeaf tipBlockLeaf;
+        bytes32[] tipBlockSiblings;
+        bytes32[] tipBlockPeaks;
+    }
+
+    enum StorageStrategy {
+        Append,
+        Overwrite
+    }
+
+    /**
+     * @notice Struct for submitSwapProof parameters
+     *
+     * @param swapBitcoinTxid Txid of the Bitcoin transaction containing the swap
+     * @param swapBitcoinBlockHash Hash of the Bitcoin block containing the swap
+     * @param vault Deposit vault being used in the swap
+     * @param storageStrategy Strategy for storing the swap commitment
+     * @param localOverwriteIndex Index of the swap commitment in a presumably local array of swaps to overwrite (if storageStrategy is Overwrite)
+     */
+    struct SubmitSwapProofParams {
+        bytes32 swapBitcoinTxid;
+        bytes32 swapBitcoinBlockHash;
+        Types.DepositVault vault;
+        StorageStrategy storageStrategy;
+        uint16 localOverwriteIndex;
+    }
+
+    /**
+     * @notice Struct for releaseLiquidity parameters
+     *
+     * @param swap Proposed swap data
+     * @param swapBlockChainwork The cumulative chainwork of the swap's block
+     * @param swapBlockHeight The block height of the swap
+     * @param bitcoinSwapBlockSiblings Merkle proof siblings for the swap block
+     * @param bitcoinSwapBlockPeaks MMR peaks for the swap block
+     * @param bitcoinConfirmationBlockLeaf The leaf node for the confirmation block
+     * @param bitcoinConfirmationBlockSiblings Merkle proof siblings for the confirmation block
+     * @param bitcoinConfirmationBlockPeaks MMR peaks for the confirmation block
+     * @param utilizedVault Deposit vault used in the swap
+     * @param tipBlockHeight The height of the current tip block
+     */
+    struct ReleaseLiquidityParams {
+        Types.ProposedSwap swap;
+        uint256 swapBlockChainwork;
+        uint32 swapBlockHeight;
+        bytes32[] bitcoinSwapBlockSiblings;
+        bytes32[] bitcoinSwapBlockPeaks;
+        Types.BlockLeaf bitcoinConfirmationBlockLeaf;
+        bytes32[] bitcoinConfirmationBlockSiblings;
+        bytes32[] bitcoinConfirmationBlockPeaks;
+        Types.DepositVault utilizedVault;
+        uint32 tipBlockHeight;
     }
 }

@@ -12,7 +12,7 @@ serde = { workspace = true }
 bitcoin = { workspace = true }
 bitcoin-core-rs = { workspace = true }
 tiny-keccak = { workspace = true }
-
+sol-types = { workspace = true }
 [dev-dependencies]
 alloy = { workspace = true }
 test-data-utils = { workspace = true }

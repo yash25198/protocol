@@ -1,6 +1,7 @@
-use crate::types::Sha256Digest;
 use bitcoin_core_rs::sha256;
 use serde::{Deserialize, Serialize};
+
+pub type Sha256Digest = [u8; 32];
 
 #[derive(Default, Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct MerkleProofStep {

@@ -1,0 +1,8 @@
+[package]
+name = "sol-types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+serde = { workspace = true }

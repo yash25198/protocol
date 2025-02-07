@@ -18,7 +18,7 @@ library Errors {
     error DepositStillLocked();
     error InvalidSwapBlockInclusionProof();
     error InvalidConfirmationBlockInclusionProof();
-    error CannotOverwriteOnGoingSwap();
+    error CannotOverwriteOngoingSwap();
     error NoFeeToPay();
     error InvalidVaultCommitment();
     error StillInChallengePeriod();

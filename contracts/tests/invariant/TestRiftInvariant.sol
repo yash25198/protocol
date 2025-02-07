@@ -5,4 +5,4 @@ import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 
-contract RiftInvariantTest is RiftTest {}
+contract RiftInvariantTest {}
