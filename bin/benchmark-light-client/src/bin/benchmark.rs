@@ -330,7 +330,7 @@ fn prove_chain_transition(
     let start = Instant::now();
 
     let program_input = rift_core::giga::RiftProgramInput::builder()
-        .proof_type(rift_core::giga::ProofType::LightClient)
+        .proof_type(rift_core::giga::RustProofType::LightClientOnly)
         .light_client_input(chain_transition)
         .build()
         .unwrap();

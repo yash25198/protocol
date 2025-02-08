@@ -319,16 +319,6 @@ contract RiftExchange is BitcoinLightClient {
             updatedSwapHashes[i] = VaultLib.hashSwap(swaps[i]);
         }
 
-        if (
-            !_proveBlockInclusionAtTip(
-                blockProofParams.tipBlockLeaf,
-                blockProofParams.tipBlockSiblings,
-                blockProofParams.tipBlockPeaks
-            )
-        ) {
-            revert Errors.InvalidTipBlockInclusionProof();
-        }
-
         bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
 
         VERIFIER.verifyProof(
@@ -346,7 +336,23 @@ contract RiftExchange is BitcoinLightClient {
             ),
             proof
         );
+
         _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.compressedBlockLeaves);
+
+        // TODO: This isn't ideal, this check requires _updateRoot to always succeed at updating to the new root which shouldn't
+        // be a requirement for swap inclusion proofs to succeed (in the case someone updates the root mid proof gen -> that shouldn't
+        // down stream proof verification to fail).
+        // Could potentially relax this requirement, but then it's possible for swap proof submitters to submit proofs with arbitrary attested
+        // bitcoin block heights - which may not matter.
+        if (
+            !_proveBlockInclusionAtTip(
+                blockProofParams.tipBlockLeaf,
+                blockProofParams.tipBlockSiblings,
+                blockProofParams.tipBlockPeaks
+            )
+        ) {
+            revert Errors.InvalidTipBlockInclusionProof();
+        }
     }
 
     // -----------------------------------------------------------------------

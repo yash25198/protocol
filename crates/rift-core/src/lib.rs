@@ -104,13 +104,13 @@ pub mod giga {
 
     #[derive(Default)]
     pub struct RiftProgramInputBuilder {
-        proof_type: Option<ProofType>,
+        proof_type: Option<RustProofType>,
         light_client_input: Option<bitcoin_light_client_core::ChainTransition>,
         rift_transaction_input: Option<Vec<RiftTransaction>>,
     }
 
     impl RiftProgramInputBuilder {
-        pub fn proof_type(mut self, proof_type: ProofType) -> Self {
+        pub fn proof_type(mut self, proof_type: RustProofType) -> Self {
             self.proof_type = Some(proof_type);
             self
         }
@@ -130,15 +130,14 @@ pub mod giga {
 
         pub fn build(self) -> Result<RiftProgramInput, &'static str> {
             let proof_type = self.proof_type.ok_or("proof_type is required")?;
-            let matchable_proof_type = RustProofType::from(proof_type.clone());
 
-            match matchable_proof_type {
+            match proof_type {
                 RustProofType::LightClientOnly => {
                     let light_client_input = self
                         .light_client_input
                         .ok_or("light_client_input is required for LightClient proof type")?;
                     Ok(RiftProgramInput {
-                        proof_type,
+                        proof_type: ProofType::from(proof_type as u8),
                         light_client_input: Some(light_client_input),
                         rift_transaction_input: None,
                     })
@@ -148,7 +147,7 @@ pub mod giga {
                         "rift_transaction_input is required for RiftTransaction proof type",
                     )?;
                     Ok(RiftProgramInput {
-                        proof_type,
+                        proof_type: ProofType::from(proof_type as u8),
                         light_client_input: None,
                         rift_transaction_input: Some(rift_transaction_input),
                     })
@@ -161,7 +160,7 @@ pub mod giga {
                         .rift_transaction_input
                         .ok_or("rift_transaction_input is required for Full proof type")?;
                     Ok(RiftProgramInput {
-                        proof_type,
+                        proof_type: ProofType::from(proof_type as u8),
                         light_client_input: Some(light_client_input),
                         rift_transaction_input: Some(rift_transaction_input),
                     })
