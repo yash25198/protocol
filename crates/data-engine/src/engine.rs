@@ -168,6 +168,11 @@ impl DataEngine {
         let mmr = self.indexed_mmr.read().await;
         mmr.get_leaf_count().await.map_err(|e| eyre::eyre!(e))
     }
+
+    pub async fn get_mmr_root(&self) -> Result<[u8; 32]> {
+        let mmr = self.indexed_mmr.read().await;
+        mmr.get_root().await.map_err(|e| eyre::eyre!(e))
+    }
 }
 
 fn get_qualified_swaps_database_path(database_location: String) -> String {

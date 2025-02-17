@@ -159,11 +159,6 @@ impl RiftDevnet {
             .get_leaves_from_block_range(0, 101, None)
             .await?;
 
-        // 3) Start EVM side
-        let circuit_verification_key_hash = get_rift_program_hash(); // or however you do it
-        let genesis_mmr_root = [0u8; 32]; // fill with your actual root
-        let (ethereum_devnet, deployment_block_number) =
-            EthDevnet::setup(circuit_verification_key_hash, genesis_mmr_root).await?;
 
         // 4) Data Engine
         info!("Seeding data engine with checkpoint leaves...");
@@ -171,6 +166,13 @@ impl RiftDevnet {
         let mut data_engine =
             DataEngine::seed(DatabaseLocation::InMemory, checkpoint_leaves).await?;
         info!("Data engine seeded in {:?}", t.elapsed());
+
+
+        // 3) Start EVM side
+        let circuit_verification_key_hash = get_rift_program_hash(); // or however you do it
+        let genesis_mmr_root = data_engine.get_mmr_root().await.unwrap();
+        let (ethereum_devnet, deployment_block_number) =
+            EthDevnet::setup(circuit_verification_key_hash, genesis_mmr_root).await?;
 
         // Start listening for on-chain events from RiftExchange
         data_engine
