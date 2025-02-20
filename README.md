@@ -29,9 +29,6 @@ Ensure you have the following tools installed:
 - [SP1](https://docs.succinct.xyz/docs/sp1/getting-started/install)
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
 - [Git LFS](https://git-lfs.github.com/)
-  ```sh
-  git lfs install
-  ```
   
 ## Run Devnet
 ```sh
