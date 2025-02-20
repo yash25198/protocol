@@ -19,8 +19,7 @@ sudo apt install -y clang pkg-config libssl-dev build-essential
 ### macOS
 For macOS, you can install the dependencies using Homebrew:
 ```sh
-brew update
-brew install clang pkg-config openssl
+brew install pkg-config openssl
 ```
 
 ## Prerequisites
