@@ -1,10 +1,9 @@
 use alloy::{
     primitives::Address,
-    providers::{Provider, WsConnect},
-    pubsub::{ConnectionHandle, PubSubConnect, PubSubFrontend},
+    providers::Provider,
+    pubsub::PubSubFrontend,
     rpc::types::{BlockNumberOrTag, Filter, Log},
     sol_types::SolEvent,
-    transports::{impl_future, TransportResult},
 };
 use bitcoin_light_client_core::{
     hasher::{Digest, Keccak256Hasher},
@@ -151,7 +150,7 @@ impl DataEngine {
         let mmr = self.indexed_mmr.read().await;
         let leaves_count = mmr.client_mmr().leaves_count.get().await?;
         let leaf_index = leaves_count - 1;
-        let leaf = mmr.find_leaf_by_leaf_index(leaf_index).await?;
+        let leaf = mmr.get_leaf_by_leaf_index(leaf_index).await?;
         match leaf {
             Some(leaf) => {
                 let proof = mmr.get_circuit_proof(leaf_index, None).await?;
@@ -169,9 +168,14 @@ impl DataEngine {
         mmr.get_leaf_count().await.map_err(|e| eyre::eyre!(e))
     }
 
-    pub async fn get_mmr_root(&self) -> Result<[u8; 32]> {
+    pub async fn get_mmr_root(&self) -> Result<Digest> {
         let mmr = self.indexed_mmr.read().await;
         mmr.get_root().await.map_err(|e| eyre::eyre!(e))
+    }
+
+    pub async fn get_mmr_bagged_peak(&self) -> Result<Digest> {
+        let mmr = self.indexed_mmr.read().await;
+        mmr.get_bagged_peak().await.map_err(|e| eyre::eyre!(e))
     }
 }
 
@@ -204,14 +208,14 @@ pub async fn listen_for_events(
             .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
 
         match *topic {
-            RiftExchange::VaultUpdated::SIGNATURE_HASH => {
+            RiftExchange::VaultsUpdated::SIGNATURE_HASH => {
                 handle_vault_updated_event(&log, db_conn).await?;
             }
             RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
                 handle_swap_updated_event(&log, db_conn).await?;
             }
-            RiftExchange::BlockTreeUpdated::SIGNATURE_HASH => {
-                handle_block_tree_updated_event(&log, indexed_mmr.clone()).await?;
+            RiftExchange::BitcoinLightClientUpdated::SIGNATURE_HASH => {
+                handle_bitcoin_light_client_updated_event(&log, indexed_mmr.clone()).await?;
             }
             _ => {
                 warn!("Unknown event topic");
@@ -229,10 +233,10 @@ async fn handle_vault_updated_event(
     info!("Received VaultUpdated event...");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::VaultUpdated::decode_log(&log.inner, false)
+    let decoded = RiftExchange::VaultsUpdated::decode_log(&log.inner, false)
         .map_err(|e| eyre::eyre!("Failed to decode VaultUpdated event: {:?}", e))?;
 
-    let deposit_vault = decoded.data.vault;
+    let deposit_vaults = decoded.data.vaults;
     let log_txid = log
         .transaction_hash
         .ok_or_else(|| eyre::eyre!("Missing txid in VaultUpdated event"))?;
@@ -243,37 +247,39 @@ async fn handle_vault_updated_event(
         .block_hash
         .ok_or_else(|| eyre::eyre!("Missing block hash in VaultUpdated event"))?;
 
-    match VaultUpdateContext::try_from(decoded.data.context)
-        .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
-    {
-        VaultUpdateContext::Created => {
-            info!("Creating deposit for index: {:?}", deposit_vault.vaultIndex);
-            add_deposit(
-                db_conn,
-                deposit_vault,
-                log_block_number,
-                log_block_hash.into(),
-                log_txid.into(),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
+    for deposit_vault in deposit_vaults {
+        match VaultUpdateContext::try_from(decoded.data.context)
+            .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
+        {
+            VaultUpdateContext::Created => {
+                info!("Creating deposit for index: {:?}", deposit_vault.vaultIndex);
+                add_deposit(
+                    db_conn,
+                    deposit_vault,
+                    log_block_number,
+                    log_block_hash.into(),
+                    log_txid.into(),
+                )
+                .await
+                .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
+            }
+            VaultUpdateContext::Withdraw => {
+                info!(
+                    "Withdrawing deposit for nonce: {:?}",
+                    deposit_vault.vaultIndex
+                );
+                update_deposit_to_withdrawn(
+                    db_conn,
+                    deposit_vault.salt.into(),
+                    log_txid.into(),
+                    log_block_number,
+                    log_block_hash.into(),
+                )
+                .await
+                .map_err(|e| eyre::eyre!("update_deposit_to_withdrawn failed: {:?}", e))?;
+            }
+            _ => {}
         }
-        VaultUpdateContext::Withdraw => {
-            info!(
-                "Withdrawing deposit for nonce: {:?}",
-                deposit_vault.vaultIndex
-            );
-            update_deposit_to_withdrawn(
-                db_conn,
-                deposit_vault.salt.into(),
-                log_txid.into(),
-                log_block_number,
-                log_block_hash.into(),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("update_deposit_to_withdrawn failed: {:?}", e))?;
-        }
-        _ => {}
     }
 
     Ok(())
@@ -337,20 +343,22 @@ async fn handle_swap_updated_event(
     Ok(())
 }
 
-async fn handle_block_tree_updated_event(
+async fn handle_bitcoin_light_client_updated_event(
     log: &Log,
     indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
 ) -> Result<()> {
-    info!("Received BlockTreeUpdated event");
+    info!("Received BitcoinLightClientUpdated event");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::BlockTreeUpdated::decode_log(&log.inner, false)
-        .map_err(|e| eyre::eyre!("Failed to decode BlockTreeUpdated event: {:?}", e))?;
+    let decoded = RiftExchange::BitcoinLightClientUpdated::decode_log(&log.inner, false)
+        .map_err(|e| eyre::eyre!("Failed to decode BitcoinLightClientUpdated event: {:?}", e))?;
 
     let block_tree_data = &decoded.data;
-    let block_tree_root = block_tree_data.treeRoot.0;
+    let prior_mmr_root = block_tree_data.priorMmrRoot.0;
+    let new_mmr_root = block_tree_data.newMmrRoot.0;
     let compressed_block_leaves = block_tree_data.compressedBlockLeaves.0.to_vec();
     let block_leaves = decompress_block_leaves(&compressed_block_leaves);
+    // TODO: Reorg the MMR based on the prior root
 
     {
         let mut mmr = indexed_mmr.write().await;
@@ -364,11 +372,11 @@ async fn handle_block_tree_updated_event(
         .get_root()
         .await
         .map_err(|e| eyre::eyre!("get_root failed: {:?}", e))?;
-    if root != block_tree_root {
+    if root != new_mmr_root {
         return Err(eyre::eyre!(
             "Root mismatch: computed {:?} but expected {:?}",
             root,
-            block_tree_root
+            new_mmr_root
         ));
     }
 

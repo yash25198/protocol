@@ -7,7 +7,7 @@ library RiftUtils {
     /// @param amount The amount being deposited/swapped
     /// @return protocolFee The calculated protocol fee, either 0.1% or MIN_PROTOCOL_FEE, whichever is larger
     function calculateFeeFromInitialDeposit(uint256 amount) internal pure returns (uint256 protocolFee) {
-        protocolFee = (amount * Constants.PROTOCOL_FEE_BP) / 10e3; // bpScale value
+        protocolFee = (amount * uint256(Constants.PROTOCOL_FEE_BP)) / 10e3; // bpScale value
     }
 
     /// @notice Calculates challenge period for a given amount of elapsed bitcoin blocks
@@ -18,5 +18,12 @@ library RiftUtils {
             ((Constants.SCALED_PROOF_GEN_SLOPE * blocksElapsed + Constants.SCALED_PROOF_GEN_INTERCEPT) /
                 Constants.PROOF_GEN_SCALING_FACTOR) +
             Constants.CHALLENGE_PERIOD_BUFFER;
+    }
+
+    /// @notice Calculates the deposit lockup period for a given number of confirmations
+    /// @param confirmations The number of confirmations
+    /// @return depositLockupPeriod The calculated deposit lockup period, in seconds
+    function calculateDepositLockupPeriod(uint8 confirmations) internal pure returns (uint64 depositLockupPeriod) {
+        depositLockupPeriod = Constants.DEPOSIT_LOCKUP_PERIOD_SCALAR * confirmations;
     }
 }

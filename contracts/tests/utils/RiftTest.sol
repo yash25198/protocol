@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
-import {Test} from "forge-std/Test.sol";
-import {IERC20} from "openzeppelin/contracts/interfaces/IERC20.sol";
-import {ERC1967Proxy} from "openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {SP1MockVerifier} from "sp1-contracts/SP1MockVerifier.sol";
-import {Vm} from "forge-std/Vm.sol";
-import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
-import "forge-std/console.sol";
+import {Test} from "forge-std/src/Test.sol";
+import {IERC20} from "@openzeppelin-contracts/interfaces/IERC20.sol";
+import {ERC1967Proxy} from "@openzeppelin-contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
+import {Vm} from "forge-std/src/Vm.sol";
+import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
+import "forge-std/src/console.sol";
 
 import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
@@ -471,7 +471,8 @@ contract RiftTest is Test, PRNG {
             _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
-            _feeRouter: address(0xfee)
+            _feeRouter: address(0xfee),
+            _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 
         mockToken = MockToken(address(exchange.DEPOSIT_TOKEN()));
@@ -553,10 +554,10 @@ contract RiftTest is Test, PRNG {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
     }
 
-    function _extractVaultFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DepositVault memory) {
+    function _extractSingleVaultFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DepositVault memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.VaultUpdated.selector) {
-                return abi.decode(logs[i].data, (Types.DepositVault));
+            if (logs[i].topics[0] == Events.VaultsUpdated.selector) {
+                return abi.decode(logs[i].data, (Types.DepositVault[]))[0];
             }
         }
         revert("Vault not found");
@@ -590,21 +591,22 @@ contract RiftTest is Test, PRNG {
         // [3] test deposit
         vm.recordLogs();
         Types.DepositLiquidityParams memory args = Types.DepositLiquidityParams({
+            depositOwnerAddress: address(this),
             specifiedPayoutAddress: address(this),
             depositAmount: depositAmount,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
             depositSalt: depositSalt,
             confirmationBlocks: confirmationBlocks,
-            tipBlockLeaf: mmr_proof.blockLeaf,
-            tipBlockSiblings: mmr_proof.siblings,
-            tipBlockPeaks: mmr_proof.peaks
+            safeBlockLeaf: mmr_proof.blockLeaf,
+            safeBlockSiblings: mmr_proof.siblings,
+            safeBlockPeaks: mmr_proof.peaks
         });
 
         exchange.depositLiquidity(args);
 
         // [4] grab the logs, find the vault
-        Types.DepositVault memory createdVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory createdVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
         uint256 vaultIndex = exchange.getVaultCommitmentsLength() - 1;
         bytes32 commitment = exchange.getVaultCommitment(vaultIndex);
 

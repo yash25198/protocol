@@ -28,5 +28,10 @@ library Errors {
     error NoVaults();
     error PayoutAddressMismatch();
     error InvalidSwapTotals();
-    error InvalidTipBlockInclusionProof();
+    error InvalidBlockInclusionProof();
+    error RootWasNotUpdated();
+    error CheckpointNotEstablished();
+    error ChainworkTooLow();
+    error NoSwapsToSubmit();
+    error NotEnoughConfirmations();
 }

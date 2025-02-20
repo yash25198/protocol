@@ -4,7 +4,6 @@ pub mod light_client;
 pub mod mmr;
 
 use crypto_bigint::U256;
-use hasher::DIGEST_BYTE_COUNT;
 use serde::{Deserialize, Serialize};
 use sol_types::Types::LightClientPublicInput;
 
@@ -27,7 +26,12 @@ fn validate_leaf_block_hashes(
             &bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
                 .expect("Failed to get parent header block hash")
         ),
-        "Parent leaf block hash does not match parent header block hash"
+        "Parent leaf block hash {} does not match parent header block hash {}",
+        hex::encode(parent_leaf.block_hash),
+        hex::encode(
+            bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
+                .expect("Failed to get parent header block hash")
+        )
     );
 
     assert!(
@@ -167,6 +171,11 @@ pub struct ChainTransition {
     pub new_headers: Vec<Header>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuxiliaryLightClientData {
+    pub compressed_leaves: Vec<u8>,
+}
+
 impl ChainTransition {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -193,7 +202,11 @@ impl ChainTransition {
 
     /// Commit to a new chain, validating the new headers are valid under PoW
     /// and that the new chain extends the previous chain from a previous header.
-    pub fn verify<H: Hasher>(&self) -> LightClientPublicInput {
+    /// auxiliary data is used by clients who create proofs who need to post data onchain
+    pub fn verify<H: Hasher>(
+        &self,
+        include_auxiliary_data: bool,
+    ) -> (LightClientPublicInput, Option<AuxiliaryLightClientData>) {
         // [0] Validate block hashes
         validate_leaf_block_hashes(
             &self.parent.header,
@@ -273,17 +286,29 @@ impl ChainTransition {
             new_mmr.append(&leaf.hash::<H>());
         }
 
-        // [11] Compress the leaves
-        let compressed_leaves: Vec<u8> = new_leaves.compress();
+        // [11] Compress the parent leaf and new leaves
+        let mut all_leaves = vec![self.parent.leaf];
+        all_leaves.extend(new_leaves);
+        let compressed_leaves: Vec<u8> = all_leaves.compress();
 
         // [12] Compute the new leaves commitment
         let new_leaves_commitment = H::hash(&compressed_leaves);
 
         // [13] return the Public Input to commit to witness
-        LightClientPublicInput {
+        let public_input = LightClientPublicInput {
             previousMmrRoot: self.previous_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
             compressedLeavesCommitment: new_leaves_commitment.into(),
+            tipBlockLeaf: (*all_leaves.last().expect("New leaves should not be empty")).into(),
+        };
+
+        if include_auxiliary_data {
+            (
+                public_input,
+                Some(AuxiliaryLightClientData { compressed_leaves }),
+            )
+        } else {
+            (public_input, None)
         }
     }
 }
@@ -293,10 +318,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use accumulators::mmr::{
-        leaf_count_to_mmr_size, map_leaf_index_to_element_index, mmr_size_to_leaf_count,
-        MMR as ClientMMR,
-    };
+    use accumulators::mmr::MMR as ClientMMR;
     use bitcoin_core_rs::get_retarget_height;
     use hasher::Keccak256Hasher;
     use leaves::get_genesis_leaf;
@@ -470,7 +492,7 @@ mod tests {
             vec![],
             new_headers.to_vec(),
         )
-        .verify::<Keccak256Hasher>();
+        .verify::<Keccak256Hasher>(false);
 
         println!("Public input: {:?}", public_input);
         // Verify the new MMR root and public inputs
@@ -480,13 +502,7 @@ mod tests {
     // Then validate the new MMR root and public inputs
     #[tokio::test]
     async fn test_bch_chain_extension_then_overwrite() {
-        let genesis_leaf = get_genesis_leaf();
-        let genesis_leaf_hash = genesis_leaf.hash::<Keccak256Hasher>();
-
-        let mut client_mmr_state = create_from_bch_fork().await;
-
-        let pre_bch_mmr_root = client_mmr_state.mmr.get_root();
-        let pre_bch_mmr_bagged_peak = client_mmr_state.mmr.bag_peaks().unwrap();
+        let client_mmr_state = create_from_bch_fork().await;
 
         let pre_bch_mmr_leaf_element_index = client_mmr_state.last_leaf_append_element_index;
 
@@ -615,7 +631,7 @@ mod tests {
                 .collect(),
             btc_headers,
         )
-        .verify::<Keccak256Hasher>();
+        .verify::<Keccak256Hasher>(false);
 
         println!("Public input: {:?}", public_input);
     }

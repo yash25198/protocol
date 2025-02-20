@@ -22,6 +22,15 @@ pub enum RiftSdkError {
 
     #[error("Failed to get block: {0}")]
     GetBlockError(String),
+
+    #[error("Insufficient funds")]
+    InsufficientFunds,
+
+    #[error("Header chain validation failed")]
+    HeaderChainValidationFailed,
+
+    #[error("Parent validation failed: {0}")]
+    ParentValidationFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, RiftSdkError>;

@@ -14,7 +14,9 @@ bitcoin-light-client-core = { workspace = true }
 data-engine = { workspace = true }
 data-engine-server = { workspace = true }
 corepc-node = { workspace = true }
-
+sol-types = { workspace = true }
+bitcoin-data-engine = { workspace = true }
+accumulators = { workspace = true }
 
 alloy = { workspace = true }
 clap = { workspace = true }
@@ -26,4 +28,4 @@ env_logger = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
-bitcoincore-rpc-async = { workspace = true }
+bitcoincore-rpc-async2 = { workspace = true }

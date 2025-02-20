@@ -9,9 +9,9 @@ import {Types} from "../../src/libraries/Types.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
-import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
+import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
-import "forge-std/console.sol";
+import "forge-std/src/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
     // hacky way to get nice formatting for the vault in logs
@@ -57,6 +57,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         bytes32 blockLeafHash = LightClientVerificationLib.buildLeafCommitment(blockLeaf);
         console.log("blockLeafHash");
+        console.logBytes32(blockLeafHash);
     }
 
     function constrainVault(
@@ -144,11 +145,14 @@ contract RiftExchangeUnitTest is RiftTest {
             confirmationBlocks
         );
 
+        console.log("calculating lock up period with confirmation blocks", confirmationBlocks);
+        console.log("depositLockupPeriod", RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
+
         // [2] warp and withdraw to empty the vault
-        vm.warp(block.timestamp + Constants.DEPOSIT_LOCKUP_PERIOD);
+        vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
         vm.recordLogs();
         exchange.withdrawLiquidity({vault: fullVault});
-        Types.DepositVault memory emptyVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory emptyVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
 
         // [3] burn the USDC withdrawn from the vault
         mockToken.transfer(address(0), mockToken.balanceOf(address(this)));
@@ -164,15 +168,16 @@ contract RiftExchangeUnitTest is RiftTest {
         vm.recordLogs();
         Types.DepositLiquidityWithOverwriteParams memory args = Types.DepositLiquidityWithOverwriteParams({
             depositParams: Types.DepositLiquidityParams({
+                depositOwnerAddress: address(this),
                 specifiedPayoutAddress: address(this),
                 depositAmount: depositAmount,
                 expectedSats: expectedSats,
                 btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
                 depositSalt: depositSalt,
                 confirmationBlocks: confirmationBlocks,
-                tipBlockLeaf: mmr_proof.blockLeaf,
-                tipBlockSiblings: mmr_proof.siblings,
-                tipBlockPeaks: mmr_proof.peaks
+                safeBlockLeaf: mmr_proof.blockLeaf,
+                safeBlockSiblings: mmr_proof.siblings,
+                safeBlockPeaks: mmr_proof.peaks
             }),
             overwriteVault: emptyVault
         });
@@ -180,7 +185,7 @@ contract RiftExchangeUnitTest is RiftTest {
         exchange.depositLiquidityWithOverwrite(args);
 
         // [6] grab the logs, find the new vault
-        Types.DepositVault memory overwrittenVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory overwrittenVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
         bytes32 commitment = exchange.getVaultCommitment(emptyVault.vaultIndex);
 
         // [7] verify "offchain" calculated commitment matches stored vault commitment
@@ -200,14 +205,12 @@ contract RiftExchangeUnitTest is RiftTest {
     function testFuzz_withdrawLiquidity(
         uint256 depositAmount,
         uint64 expectedSats,
-        uint256 withdrawalDelay,
         uint8 confirmationBlocks,
         uint256
     ) public {
         // [0] bound inputs
         depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
-        withdrawalDelay = bound(withdrawalDelay, Constants.DEPOSIT_LOCKUP_PERIOD, 365 days);
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
 
         // [1] create initial deposit and get vault
@@ -220,12 +223,12 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256 expectedWithdrawAmount = vault.depositAmount;
 
         // [2] warp to future time after lockup period
-        vm.warp(block.timestamp + withdrawalDelay);
+        vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks) + 1);
 
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
         exchange.withdrawLiquidity(vault);
-        Types.DepositVault memory updatedVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory updatedVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
 
         // [4] verify updated vault commitment matches stored commitment
         bytes32 storedCommitment = exchange.getVaultCommitment(vault.vaultIndex);
@@ -275,7 +278,10 @@ contract RiftExchangeUnitTest is RiftTest {
         // [4] create dummy tip block data
         bytes32 priorMmrRoot = exchange.mmrRoot();
 
-        Types.MMRProof memory mmrProof = _generateFakeBlockMMRProofFFI(0);
+        (
+            Types.MMRProof memory mmrProof,
+            Types.MMRProof memory tipMmrProof
+        ) = _generateFakeBlockWithConfirmationsMMRProofFFI(0, params.confirmationBlocks);
         /*
             SubmitSwapProofParams[] calldata swapParams,
             BlockProofParams calldata blockProofParams,
@@ -295,10 +301,12 @@ contract RiftExchangeUnitTest is RiftTest {
         */
         swapParams[0] = Types.SubmitSwapProofParams({
             swapBitcoinTxid: params.swapBitcoinTxid,
-            swapBitcoinBlockHash: mmrProof.blockLeaf.blockHash,
             vault: vault,
             storageStrategy: Types.StorageStrategy.Append,
-            localOverwriteIndex: 0
+            localOverwriteIndex: 0,
+            swapBitcoinBlockLeaf: mmrProof.blockLeaf,
+            swapBitcoinBlockSiblings: mmrProof.siblings,
+            swapBitcoinBlockPeaks: mmrProof.peaks
         });
 
         /*
@@ -315,13 +323,12 @@ contract RiftExchangeUnitTest is RiftTest {
             priorMmrRoot: priorMmrRoot,
             newMmrRoot: mmrProof.mmrRoot,
             compressedBlockLeaves: compressedBlockLeaves,
-            tipBlockLeaf: mmrProof.blockLeaf,
-            tipBlockSiblings: mmrProof.siblings,
-            tipBlockPeaks: mmrProof.peaks
+            tipBlockLeaf: tipMmrProof.blockLeaf
         });
+        console.log("blockProofParams.tipBlockLeaf.height", blockProofParams.tipBlockLeaf.height);
         Types.ProposedSwap[] memory overwriteSwaps = new Types.ProposedSwap[](0);
 
-        exchange.submitBatchSwapProof(swapParams, blockProofParams, overwriteSwaps, proof);
+        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, overwriteSwaps, proof);
 
         // [5] extract swap from logs
         Types.ProposedSwap memory createdSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
@@ -367,22 +374,22 @@ contract RiftExchangeUnitTest is RiftTest {
         Types.SubmitSwapProofParams[] memory swapParams = new Types.SubmitSwapProofParams[](1);
         swapParams[0] = Types.SubmitSwapProofParams({
             swapBitcoinTxid: params.swapBitcoinTxid,
-            swapBitcoinBlockHash: swapMmrProof.blockLeaf.blockHash,
             vault: vault,
             storageStrategy: Types.StorageStrategy.Append,
-            localOverwriteIndex: 0
+            localOverwriteIndex: 0,
+            swapBitcoinBlockLeaf: swapMmrProof.blockLeaf,
+            swapBitcoinBlockSiblings: swapMmrProof.siblings,
+            swapBitcoinBlockPeaks: swapMmrProof.peaks
         });
         Types.BlockProofParams memory blockProofParams = Types.BlockProofParams({
             priorMmrRoot: priorMmrRoot,
             newMmrRoot: tipMmrProof.mmrRoot,
             compressedBlockLeaves: compressedBlockLeaves,
-            tipBlockLeaf: tipMmrProof.blockLeaf,
-            tipBlockSiblings: tipMmrProof.siblings,
-            tipBlockPeaks: tipMmrProof.peaks
+            tipBlockLeaf: tipMmrProof.blockLeaf
         });
         Types.ProposedSwap[] memory overwriteSwaps = new Types.ProposedSwap[](0);
 
-        exchange.submitBatchSwapProof(swapParams, blockProofParams, overwriteSwaps, proof);
+        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, overwriteSwaps, proof);
 
         createdSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
         return (vault, createdSwap, swapMmrProof, tipMmrProof);
@@ -395,7 +402,7 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256 initialFeeBalance,
         uint256 totalSwapOutput,
         uint256 totalSwapFee
-    ) internal {
+    ) internal view {
         // Verify funds were transferred correctly
         assertEq(
             mockToken.balanceOf(address(this)),
@@ -472,14 +479,14 @@ contract RiftExchangeUnitTest is RiftTest {
             swapBlockHeight: swapMmrProof.blockLeaf.height,
             bitcoinSwapBlockSiblings: swapMmrProof.siblings,
             bitcoinSwapBlockPeaks: swapMmrProof.peaks,
-            bitcoinConfirmationBlockLeaf: tipMmrProof.blockLeaf,
-            bitcoinConfirmationBlockSiblings: tipMmrProof.siblings,
-            bitcoinConfirmationBlockPeaks: tipMmrProof.peaks,
             utilizedVault: vault,
             tipBlockHeight: tipMmrProof.blockLeaf.height
         });
 
-        exchange.releaseLiquidity(releaseLiquidityParams);
+        Types.ReleaseLiquidityParams[] memory releaseLiquidityParamsArray = new Types.ReleaseLiquidityParams[](1);
+        releaseLiquidityParamsArray[0] = releaseLiquidityParams;
+
+        exchange.releaseLiquidityBatch(releaseLiquidityParamsArray);
 
         // Verify swap completion
         Types.ProposedSwap memory updatedSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
@@ -519,5 +526,9 @@ contract RiftExchangeUnitTest is RiftTest {
             feeRouterBalancePrePayout,
             "Fee router should have received all fees"
         );
+    }
+
+    function test_specificFailcase() public {
+        // Create swap
     }
 }
