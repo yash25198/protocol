@@ -11,9 +11,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-16-cores  # GitHub's 16-core AMD runner
+            runner: ubuntu-24.04
           - arch: arm64
-            runner: ubuntu-16-cores-arm64  # GitHub's 16-core ARM runner
+            runner: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.runner }}
 
