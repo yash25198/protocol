@@ -11,9 +11,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-amd64-16-cores
+            runner: ubuntu-24.04-amd64-16-cores
           - arch: arm64
-            runner: ubuntu-arm64-16-cores
+            runner: ubuntu-24.04-arm64-16-cores
 
     runs-on: ${{ matrix.runner }}
 
