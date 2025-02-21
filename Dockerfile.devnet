@@ -1,43 +1,33 @@
-# ----------------------------------------------
-# 1) Builder Stage
-#    Build the 'devnet' binary in a Rust environment
-# ----------------------------------------------
-FROM rust:1.68.0-slim-bullseye AS builder
+FROM rust:1.82.0-slim-bullseye
 
-# Install any build dependencies you might need
-# (If you need apt packages, add them here)
+# Install dependencies
 RUN apt-get update && apt-get install -y \
-    pkg-config libssl-dev build-essential \
+    pkg-config libssl-dev build-essential curl git clang \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a new empty shell project
+# Install Foundry
+RUN curl -L https://foundry.paradigm.xyz | bash && \
+    . ~/.bashrc && \
+    foundryup -i v1.0.0
+
+# Install SP1
+RUN curl -L https://sp1up.succinct.xyz | bash && \
+    . ~/.bashrc && \
+    sp1up -v v4.0.1
+
+# Make sure the installed binaries are on PATH for all future RUN commands
+ENV PATH="/root/.foundry/bin:/root/.sp1/bin:${PATH}"
+
+# Set working directory
 WORKDIR /app
 
 # Copy the entire monorepo into /app
 COPY . .
 
-# Build only the 'devnet' binary in release mode
+# Build the devnet binary
 RUN cargo build --release --bin devnet
 
-# ----------------------------------------------
-# 2) Final Stage
-#    Copies the compiled binary into a minimal base
-# ----------------------------------------------
-FROM debian:bullseye-slim
+# Default entrypoint
+ENTRYPOINT ["/app/target/release/devnet"]
+CMD []
 
-# Install runtime dependencies if needed
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
-# Copy the 'devnet' binary from builder stage
-COPY --from=builder /app/target/release/devnet /usr/local/bin/devnet
-
-# Optionally set a working directory if your devnet needs to read or write files
-WORKDIR /opt/devnet
-
-# Expose any ports that 'devnet' might be listening on
-# (Uncomment if your devnet uses some known port, e.g. 50100)
-# EXPOSE 50100
-
-# By default, 'docker run devnet:latest' will show help text, but you can pass additional arguments.
-ENTRYPOINT ["/usr/local/bin/devnet"]
-CMD ["--help"]

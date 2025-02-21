@@ -29,6 +29,7 @@ use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt};
 
 // ================== Contract ABIs ================== //
 
+const TOKEN_ADDRESS: &str = "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf";
 const TOKEN_SYMBOL: &str = "cbBTC";
 const TOKEN_NAME: &str = "Coinbase Wrapped BTC";
 const TOKEN_DECIMALS: u8 = 8;
@@ -217,19 +218,19 @@ impl RiftDevnet {
         if interactive {
             println!("---RIFT DEVNET---");
             println!(
-                "Anvil HTTP Url:        {}",
-                ethereum_devnet.anvil.endpoint()
+                "Anvil HTTP Url:        http://0.0.0.0:{}",
+                ethereum_devnet.anvil.port()
             );
             println!(
-                "Anvil WS Url:          {}",
-                ethereum_devnet.anvil.ws_endpoint()
+                "Anvil WS Url:          ws://0.0.0.0:{}",
+                ethereum_devnet.anvil.port()
             );
             println!(
                 "Anvil Chain ID:        {}",
                 ethereum_devnet.anvil.chain_id()
             );
             println!(
-                "Data Engine HTTP URL:  http://localhost:{}",
+                "Data Engine HTTP URL:  http://0.0.0.0:{}",
                 CONTRACT_DATA_ENGINE_SERVER_PORT
             );
             println!(
