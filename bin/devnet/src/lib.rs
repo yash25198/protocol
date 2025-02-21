@@ -1,7 +1,7 @@
 //! `lib.rs` — central library code.
 
-mod bitcoin_devnet;
-mod evm_devnet;
+pub mod bitcoin_devnet;
+pub mod evm_devnet;
 
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
@@ -10,7 +10,7 @@ use bitcoin_data_engine::BitcoinDataEngine;
 pub use bitcoin_devnet::BitcoinDevnet;
 pub use evm_devnet::EthDevnet;
 
-use evm_devnet::EvmWebsocketProvider;
+use evm_devnet::{EvmWebsocketProvider, ForkConfig};
 use eyre::Result;
 use log::info;
 use rift_sdk::bindings::RiftExchange;
@@ -158,7 +158,9 @@ impl RiftDevnet {
         interactive: bool,
         funded_evm_address: Option<String>,
         funded_bitcoin_address: Option<String>,
+        fork_config: Option<ForkConfig>,
     ) -> Result<(Self, u64)> {
+        println!("Setting up RiftDevnet...");
         // 1) Bitcoin side
         let bitcoin_devnet = BitcoinDevnet::setup(funded_bitcoin_address)?;
         let funding_sats = bitcoin_devnet.funded_sats;
@@ -166,7 +168,7 @@ impl RiftDevnet {
         // 2) Grab some additional info (like checkpoint leaves)
         info!("Downloading checkpoint leaves from block range 0..101");
         let checkpoint_leaves = bitcoin_devnet
-            .btc_rpc_client
+            .rpc_client
             .get_leaves_from_block_range(0, 101, None, None)
             .await?;
 
@@ -185,6 +187,7 @@ impl RiftDevnet {
             circuit_verification_key_hash,
             contract_data_engine.get_mmr_root().await.unwrap(),
             *tip_block_leaf,
+            fork_config,
         )
         .await?;
 
@@ -231,7 +234,7 @@ impl RiftDevnet {
             );
             println!(
                 "Bitcoin RPC URL:       {}",
-                bitcoin_devnet.bitcoin_regtest.rpc_url()
+                bitcoin_devnet.regtest.rpc_url()
             );
             println!(
                 "{} Address:  {}",
@@ -384,6 +387,7 @@ mod tests {
             /*interactive=*/ false,
             /*funded_evm_address=*/ Some(maker_evm_address.to_string()),
             /*funded_bitcoin_address=*/ None,
+            /*fork_config=*/ None,
         )
         .await
         .expect("Failed to set up devnet");
@@ -631,17 +635,12 @@ mod tests {
 
         let payment_tx_serialized = payment_tx_serialized.as_slice();
 
-        let current_block_height = devnet
-            .bitcoin
-            .btc_rpc_client
-            .get_block_count()
-            .await
-            .unwrap();
+        let current_block_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
 
         // broadcast it
         let broadcast_tx = devnet
             .bitcoin
-            .btc_rpc_client
+            .rpc_client
             .send_raw_transaction(payment_tx_serialized)
             .await
             .unwrap();
@@ -658,7 +657,7 @@ mod tests {
         // wait for the block height to be included in the data engine
         let swap_leaf = devnet
             .bitcoin
-            .bitcoin_data_engine
+            .data_engine
             .wait_for_block_height(swap_block_height as u32)
             .await
             .unwrap();
@@ -743,7 +742,7 @@ mod tests {
         let parent_header: Header = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(
             &devnet
                 .bitcoin
-                .btc_rpc_client
+                .rpc_client
                 .get_block_header(
                     &bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
                         &parent_leaf
@@ -781,7 +780,7 @@ mod tests {
         let parent_retarget_leaf_index = get_retarget_height_from_block_height(parent_leaf.height);
         let parent_retarget_leaf = devnet
             .bitcoin
-            .bitcoin_data_engine
+            .data_engine
             .indexed_mmr
             .read()
             .await
@@ -792,7 +791,7 @@ mod tests {
         let parent_retarget_header = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(
             &devnet
                 .bitcoin
-                .btc_rpc_client
+                .rpc_client
                 .get_block_header(
                     &bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
                         &parent_retarget_leaf
@@ -821,7 +820,7 @@ mod tests {
         let first_download_height = parent_leaf.height + 1;
         let last_download_height = devnet
             .bitcoin
-            .bitcoin_data_engine
+            .data_engine
             .indexed_mmr
             .read()
             .await
@@ -837,7 +836,7 @@ mod tests {
 
         let new_headers = devnet
             .bitcoin
-            .btc_rpc_client
+            .rpc_client
             .get_headers_from_block_range(
                 first_download_height,
                 last_download_height as u32,
@@ -907,7 +906,7 @@ mod tests {
 
         let swap_block_hash = devnet
             .bitcoin
-            .btc_rpc_client
+            .rpc_client
             .get_block_hash(swap_block_height as u64)
             .await
             .unwrap();
@@ -916,7 +915,7 @@ mod tests {
             bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(
                 &devnet
                     .bitcoin
-                    .btc_rpc_client
+                    .rpc_client
                     .get_block_header(&swap_block_hash)
                     .await
                     .unwrap(),
@@ -926,7 +925,7 @@ mod tests {
 
         let swap_full_block = devnet
             .bitcoin
-            .btc_rpc_client
+            .rpc_client
             .get_block(&swap_block_hash)
             .await
             .unwrap();
@@ -968,7 +967,7 @@ mod tests {
 
         let swap_mmr_proof = devnet
             .bitcoin
-            .bitcoin_data_engine
+            .data_engine
             .indexed_mmr
             .read()
             .await
@@ -1081,7 +1080,7 @@ mod tests {
         // First, get the MMR proof for the swap block (this proof contains the leaf data, siblings, and peaks)
         let swap_mmr_proof = devnet
             .bitcoin
-            .bitcoin_data_engine
+            .data_engine
             .indexed_mmr
             .read()
             .await
@@ -1092,7 +1091,7 @@ mod tests {
         // Also, get the current tip proof (used here to provide the tip block height)
         let tip_mmr_proof = devnet
             .bitcoin
-            .bitcoin_data_engine
+            .data_engine
             .indexed_mmr
             .read()
             .await

@@ -1,0 +1,43 @@
+# ----------------------------------------------
+# 1) Builder Stage
+#    Build the 'devnet' binary in a Rust environment
+# ----------------------------------------------
+FROM rust:1.68.0-slim-bullseye AS builder
+
+# Install any build dependencies you might need
+# (If you need apt packages, add them here)
+RUN apt-get update && apt-get install -y \
+    pkg-config libssl-dev build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a new empty shell project
+WORKDIR /app
+
+# Copy the entire monorepo into /app
+COPY . .
+
+# Build only the 'devnet' binary in release mode
+RUN cargo build --release --bin devnet
+
+# ----------------------------------------------
+# 2) Final Stage
+#    Copies the compiled binary into a minimal base
+# ----------------------------------------------
+FROM debian:bullseye-slim
+
+# Install runtime dependencies if needed
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Copy the 'devnet' binary from builder stage
+COPY --from=builder /app/target/release/devnet /usr/local/bin/devnet
+
+# Optionally set a working directory if your devnet needs to read or write files
+WORKDIR /opt/devnet
+
+# Expose any ports that 'devnet' might be listening on
+# (Uncomment if your devnet uses some known port, e.g. 50100)
+# EXPOSE 50100
+
+# By default, 'docker run devnet:latest' will show help text, but you can pass additional arguments.
+ENTRYPOINT ["/usr/local/bin/devnet"]
+CMD ["--help"]

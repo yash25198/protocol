@@ -18,9 +18,9 @@ use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {
-    pub bitcoin_data_engine: Arc<BitcoinDataEngine>,
-    pub btc_rpc_client: Arc<AsyncBitcoinClient>,
-    pub bitcoin_regtest: BitcoinRegtest,
+    pub data_engine: Arc<BitcoinDataEngine>,
+    pub rpc_client: Arc<AsyncBitcoinClient>,
+    pub regtest: BitcoinRegtest,
     pub miner_client: BitcoinClient,
     pub miner_address: BitcoinAddress,
     pub cookie: PathBuf,
@@ -80,9 +80,9 @@ impl BitcoinDevnet {
         ));
 
         let devnet = BitcoinDevnet {
-            bitcoin_data_engine: Arc::new(bitcoin_data_engine),
-            btc_rpc_client: bitcoin_rpc_client,
-            bitcoin_regtest,
+            data_engine: Arc::new(bitcoin_data_engine),
+            rpc_client: bitcoin_rpc_client,
+            regtest: bitcoin_regtest,
             miner_client: alice,
             miner_address: alice_address,
             cookie,
@@ -93,7 +93,7 @@ impl BitcoinDevnet {
     }
 
     pub async fn mine_blocks(&self, blocks: usize) -> Result<()> {
-        self.bitcoin_regtest
+        self.regtest
             .client
             .generate_to_address(blocks, &self.miner_address)?;
         Ok(())
@@ -106,13 +106,13 @@ impl BitcoinDevnet {
         amount: Amount,
     ) -> Result<GetRawTransactionResult> {
         let blocks_to_mine = (amount.to_btc() / 50.0).ceil() as usize;
-        self.bitcoin_regtest
+        self.regtest
             .client
             .generate_to_address(blocks_to_mine, &self.miner_address)?;
         let txid = self.miner_client.send_to_address(&address, amount)?;
         println!("TXID: {}", txid.clone().txid().unwrap());
         let full_transaction = self
-            .btc_rpc_client
+            .rpc_client
             .get_raw_transaction_info(
                 &Txid::from_str(&txid.txid().unwrap().to_string()).unwrap(),
                 None,

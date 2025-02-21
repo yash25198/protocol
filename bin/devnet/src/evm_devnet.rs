@@ -59,8 +59,9 @@ impl EthDevnet {
         circuit_verification_key_hash: [u8; 32],
         genesis_mmr_root: [u8; 32],
         tip_block_leaf: BlockLeaf,
+        fork_config: Option<ForkConfig>,
     ) -> Result<(Self, u64)> {
-        let anvil = spawn_anvil().await?;
+        let anvil = spawn_anvil(fork_config).await?;
         info!(
             "Anvil spawned at {}, chain_id={}",
             anvil.endpoint(),
@@ -118,18 +119,28 @@ impl EthDevnet {
     }
 }
 
+pub struct ForkConfig {
+    pub url: String,
+    pub block_number: Option<u64>,
+}
+
 /// Spawns Anvil in a blocking task.
-async fn spawn_anvil() -> Result<AnvilInstance> {
+async fn spawn_anvil(fork_config: Option<ForkConfig>) -> Result<AnvilInstance> {
     tokio::task::spawn_blocking(|| {
-        Anvil::new()
+        let mut anvil = Anvil::new()
             .block_time(1)
             .chain_id(1337)
             .port(50101_u16)
             .arg("--steps-tracing")
             .arg("--timestamp")
-            .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string())
-            .try_spawn()
-            .map_err(|e| eyre!(e))
+            .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string());
+        if let Some(fork_config) = fork_config {
+            anvil = anvil.fork(fork_config.url);
+            if let Some(block_number) = fork_config.block_number {
+                anvil = anvil.fork_block_number(block_number);
+            }
+        }
+        anvil.try_spawn().map_err(|e| eyre!(e))
     })
     .await?
 }

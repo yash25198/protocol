@@ -174,7 +174,7 @@ async fn block_watchtower(
         let (local_best_block_hash, local_leaf_count): (Option<[u8; 32]>, u32) = {
             let local_indexed_mmr = indexed_mmr.read().await;
             let local_leaf_count = local_indexed_mmr.get_leaf_count().await.unwrap();
-            println!("Local leaf count: {:?}", local_leaf_count);
+            // println!("Local leaf count: {:?}", local_leaf_count);
 
             if local_leaf_count > 0 {
                 (
@@ -214,7 +214,7 @@ async fn block_watchtower(
             }
         };
 
-        println!("Best chain tip: {:?}", best_block);
+        // println!("Best chain tip: {:?}", best_block);
 
         let remote_best_block_hash: [u8; 32] = best_block.hash.as_hash().into_inner();
         let remote_best_block_height = best_block.height;
@@ -222,7 +222,7 @@ async fn block_watchtower(
         if local_best_block_hash.is_some()
             && remote_best_block_hash == local_best_block_hash.unwrap()
         {
-            println!("Local and remote fully synced");
+            // println!("Local and remote fully synced");
         } else {
             // determine if we need to reorg any local blocks
             // at this point all we know is the local block hash and the remote best block hash are different
@@ -240,11 +240,6 @@ async fn block_watchtower(
             };
 
             let download_start_height = common_ancestor_leaf.map_or(0, |leaf| leaf.height + 1);
-
-            println!(
-                "[watchtower] Downloading from {:?} to {:?}",
-                download_start_height, remote_best_block_height
-            );
 
             // Get the headers for the blocks since the common ancestor
             download_and_sync(

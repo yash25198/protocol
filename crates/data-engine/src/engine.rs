@@ -130,7 +130,6 @@ impl DataEngine {
                 .await
                 .batch_append(&checkpoint_leaves)
                 .await?;
-            println!("Seeded data engine with checkpoint leaves...");
         }
         Ok(())
     }
