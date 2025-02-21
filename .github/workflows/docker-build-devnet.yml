@@ -29,6 +29,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64  # QEMU will emulate arm64
           file: Dockerfile.devnet
           push: true
           tags: |
