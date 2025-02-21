@@ -12,7 +12,7 @@ contract MockToken is ERC20 {
     }
 
     // Interop
-    function masterMinter() public view returns (address) {
+    function masterMinter() external view returns (address) {
         return msg.sender;
     }
 

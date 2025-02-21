@@ -75,6 +75,7 @@ pub async fn deploy_contracts(
     circuit_verification_key_hash: [u8; 32],
     genesis_mmr_root: [u8; 32],
     tip_block_leaf: BlockLeaf,
+    on_fork: bool,
 ) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockTokenWebsocket>, u64)> {
     use alloy::{
         hex::FromHex,
@@ -105,14 +106,27 @@ pub async fn deploy_contracts(
         .anvil_set_code(verifier_contract, SP1MockVerifier::BYTECODE.clone())
         .await?;
 
-    // Deploy the mock token
-    let token = MockToken::deploy(
-        provider.clone(),
-        TOKEN_NAME.to_owned(),
-        TOKEN_SYMBOL.to_owned(),
-        TOKEN_DECIMALS,
-    )
-    .await?;
+    let token_address = EvmAddress::from_str(TOKEN_ADDRESS)?;
+    // Deploy the mock token, this is dependent on if we're on a fork or not
+    let token = if !on_fork {
+        // deploy it
+        let mock_token = MockToken::deploy(
+            provider.clone(),
+            TOKEN_NAME.to_string(),
+            TOKEN_SYMBOL.to_string(),
+            TOKEN_DECIMALS,
+        )
+        .await?;
+        provider
+            .anvil_set_code(
+                token_address,
+                provider.get_code_at(*mock_token.address()).await?,
+            )
+            .await?;
+        MockToken::new(token_address, provider.clone())
+    } else {
+        MockToken::new(token_address, provider.clone())
+    };
 
     // Record the block number to track from
     let deployment_block_number = provider.get_block_number().await?;
@@ -260,10 +274,12 @@ impl RiftDevnet {
             ethereum_devnet
                 .fund_eth_address(address, U256::from_str("10000000000000000000")?)
                 .await?;
+
             // Fund with e.g. 1_000_000 tokens
             ethereum_devnet
-                .fund_token(address, U256::from_str("10000000000000000000")?)
+                .mint_token(address, U256::from_str("10000000000000000000")?)
                 .await?;
+
             // get the balance of the funded address
             let balance = ethereum_devnet.funded_provider.get_balance(address).await?;
             println!("Ether Balance: {:?}", balance);

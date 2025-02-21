@@ -8,7 +8,7 @@ use rift_sdk::create_websocket_provider;
 use tokio::time::Instant;
 
 use alloy::{
-    network::{Ethereum, EthereumWallet},
+    network::{Ethereum, EthereumWallet, TransactionBuilder},
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, U256},
     providers::{
@@ -17,9 +17,10 @@ use alloy::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             WalletFiller,
         },
-        Identity, ProviderBuilder, RootProvider, WsConnect,
+        Identity, Provider, ProviderBuilder, RootProvider, WsConnect,
     },
     pubsub::PubSubFrontend,
+    rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };
 
@@ -51,6 +52,8 @@ pub struct EthDevnet {
     pub token_contract: Arc<MockTokenWebsocket>,
     pub rift_exchange_contract: Arc<RiftExchangeWebsocket>,
     pub funded_provider: EvmWebsocketProvider,
+
+    pub on_fork: bool,
 }
 
 impl EthDevnet {
@@ -61,6 +64,7 @@ impl EthDevnet {
         tip_block_leaf: BlockLeaf,
         fork_config: Option<ForkConfig>,
     ) -> Result<(Self, u64)> {
+        let on_fork = fork_config.is_some();
         let anvil = spawn_anvil(fork_config).await?;
         info!(
             "Anvil spawned at {}, chain_id={}",
@@ -75,6 +79,7 @@ impl EthDevnet {
             circuit_verification_key_hash,
             genesis_mmr_root,
             tip_block_leaf,
+            on_fork,
         )
         .await?;
         info!("Deployed in {:?}", t.elapsed());
@@ -94,6 +99,7 @@ impl EthDevnet {
             token_contract,
             rift_exchange_contract: rift_exchange,
             funded_provider: Arc::new(funded_provider),
+            on_fork,
         };
 
         Ok((devnet, deployment_block_number))
@@ -108,13 +114,58 @@ impl EthDevnet {
     }
 
     /// Mints the mock token for `address`.
-    pub async fn fund_token(&self, address: Address, amount: U256) -> Result<()> {
-        self.token_contract
-            .mint(address, amount)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
+    pub async fn mint_token(&self, address: Address, amount: U256) -> Result<()> {
+        let impersonate_provider = ProviderBuilder::new()
+            .on_http(format!("http://localhost:{}", self.anvil.port()).parse()?);
+        if self.on_fork {
+            // 1. Get the master minter address
+            let master_minter = self.token_contract.masterMinter().call().await?._0;
+
+            // 2. Configure master minter with maximum minting allowance
+            let max_allowance = U256::MAX;
+            let configure_minter_calldata = self
+                .token_contract
+                .configureMinter(master_minter, max_allowance)
+                .calldata()
+                .clone();
+
+            let tx = TransactionRequest::default()
+                .with_from(master_minter)
+                .with_to(*self.token_contract.address())
+                .with_input(configure_minter_calldata.clone());
+
+            impersonate_provider
+                .anvil_impersonate_account(master_minter)
+                .await?;
+
+            impersonate_provider
+                .send_transaction(tx)
+                .await?
+                .get_receipt()
+                .await?;
+
+            let mint_calldata = self.token_contract.mint(address, amount).calldata().clone();
+
+            let tx = TransactionRequest::default()
+                .with_from(master_minter)
+                .with_to(*self.token_contract.address())
+                .with_input(mint_calldata.clone());
+
+            // 3. Mint tokens as master minter
+            impersonate_provider
+                .send_transaction(tx)
+                .await?
+                .get_receipt()
+                .await?;
+        } else {
+            // For local devnet, directly mint tokens
+            self.token_contract
+                .mint(address, amount)
+                .send()
+                .await?
+                .get_receipt()
+                .await?;
+        }
         Ok(())
     }
 }
