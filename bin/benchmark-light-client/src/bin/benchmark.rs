@@ -181,27 +181,24 @@ async fn extend_with_bch_blocks(
     }
 
     // the new tip
-    let previous_tip_leaf = *bch_leaves.last().unwrap();
-    let previous_tip_header = bch_headers.last().unwrap();
-    let previous_tip_element_index = *state
-        .height_to_index
-        .get(&previous_tip_leaf.height)
-        .unwrap();
+    let current_tip_leaf = *bch_leaves.last().unwrap();
+    let current_tip_header = bch_headers.last().unwrap();
+    let current_tip_element_index = *state.height_to_index.get(&current_tip_leaf.height).unwrap();
 
-    let previous_tip_leaf_index = element_index_to_leaf_index(previous_tip_element_index).unwrap();
+    let current_tip_leaf_index = element_index_to_leaf_index(current_tip_element_index).unwrap();
 
     // real mmr proof
-    let previous_tip_proof = state
+    let current_tip_proof = state
         .indexed_mmr
-        .get_circuit_proof(previous_tip_leaf_index, None)
+        .get_circuit_proof(current_tip_leaf_index, None)
         .await
         .unwrap();
 
     println!("Chain extended in {}", format_duration(start.elapsed()));
     (
-        previous_tip_leaf,
-        *previous_tip_header,
-        previous_tip_proof,
+        current_tip_leaf,
+        *current_tip_header,
+        current_tip_proof,
         bch_leaves,
     )
 }
@@ -215,7 +212,7 @@ async fn create_bch_overwrite_chain_transition(
     let start = Instant::now();
 
     // 1) Append n BCH blocks
-    let (previous_tip_leaf, previous_tip_header, previous_tip_proof, bch_leaves) =
+    let (current_tip_leaf, current_tip_header, current_tip_proof, bch_leaves) =
         extend_with_bch_blocks(state, n).await;
 
     // 2) Collect their leaf hashes (to "dispose" them)
@@ -243,8 +240,8 @@ async fn create_bch_overwrite_chain_transition(
         .unwrap();
 
     // 4) The previous MMR root is the chain after we appended n BCH blocks
-    let previous_mmr_root = state.indexed_mmr.get_root().await.unwrap();
-    let previous_mmr_bagged_peak = state.indexed_mmr.get_bagged_peak().await.unwrap();
+    let current_mmr_root = state.indexed_mmr.get_root().await.unwrap();
+    let current_mmr_bagged_peak = state.indexed_mmr.get_bagged_peak().await.unwrap();
 
     // 5) Next gather n+1 BTC headers
     let start_idx = 478559;
@@ -255,12 +252,12 @@ async fn create_bch_overwrite_chain_transition(
         .collect::<Vec<_>>();
 
     // 6) The "previous tip" proof is the proof we just got for the last BCH block
-    //    (previous_tip_leaf & previous_tip_proof).
+    //    (current_tip_leaf & current_tip_proof).
 
     // 7) Build the chain transition
     let chain_transition = ChainTransition {
-        previous_mmr_root,
-        previous_mmr_bagged_peak,
+        current_mmr_root,
+        current_mmr_bagged_peak,
         parent: BlockPosition {
             header: state.parent_header,
             leaf: state.parent_leaf,
@@ -271,10 +268,10 @@ async fn create_bch_overwrite_chain_transition(
             leaf: state.parent_retarget_leaf,
             inclusion_proof: parent_retarget_inclusion_proof,
         },
-        previous_tip: BlockPosition {
-            header: previous_tip_header,
-            leaf: previous_tip_leaf,
-            inclusion_proof: previous_tip_proof,
+        current_tip: BlockPosition {
+            header: current_tip_header,
+            leaf: current_tip_leaf,
+            inclusion_proof: current_tip_proof,
         },
         parent_leaf_peaks: state.pre_bch_peaks.clone(),
         disposed_leaf_hashes,

@@ -18,8 +18,8 @@ fn validate_leaf_block_hashes(
     parent_leaf: &BlockLeaf,
     parent_retarget_header: &Header,
     parent_retarget_leaf: &BlockLeaf,
-    previous_tip_header: &Header,
-    previous_tip_leaf: &BlockLeaf,
+    current_tip_header: &Header,
+    current_tip_leaf: &BlockLeaf,
 ) {
     assert!(
         parent_leaf.compare_by_natural_block_hash(
@@ -43,8 +43,8 @@ fn validate_leaf_block_hashes(
     );
 
     assert!(
-        previous_tip_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(&previous_tip_header.as_bytes())
+        current_tip_leaf.compare_by_natural_block_hash(
+            &bitcoin_core_rs::get_block_hash(&current_tip_header.as_bytes())
                 .expect("Failed to get previous tip header block hash")
         ),
         "Previous tip leaf block hash does not match previous tip header block hash"
@@ -54,12 +54,12 @@ fn validate_leaf_block_hashes(
 #[allow(clippy::too_many_arguments)]
 fn validate_mmr_proofs<H: Hasher>(
     parent_leaf_hash: &Digest,
-    previous_tip_leaf_hash: &Digest,
+    current_tip_leaf_hash: &Digest,
     parent_retarget_leaf_hash: &Digest,
     parent_leaf_inclusion_proof: &MMRProof,
-    previous_tip_leaf_inclusion_proof: &MMRProof,
+    current_tip_leaf_inclusion_proof: &MMRProof,
     parent_retarget_leaf_inclusion_proof: &MMRProof,
-    previous_mmr_root: &Digest,
+    current_mmr_root: &Digest,
     previous_mmr_leaf_count: u32,
 ) {
     // [1] Validate parent leaf hashes match inclusion proof leaf hashes
@@ -69,7 +69,7 @@ fn validate_mmr_proofs<H: Hasher>(
     );
 
     assert_eq!(
-        previous_tip_leaf_hash, &previous_tip_leaf_inclusion_proof.leaf_hash,
+        current_tip_leaf_hash, &current_tip_leaf_inclusion_proof.leaf_hash,
         "Previous tip leaf hash does not match previous tip leaf inclusion proof leaf"
     );
 
@@ -85,7 +85,7 @@ fn validate_mmr_proofs<H: Hasher>(
     );
 
     assert_eq!(
-        previous_mmr_leaf_count, previous_tip_leaf_inclusion_proof.leaf_count,
+        previous_mmr_leaf_count, current_tip_leaf_inclusion_proof.leaf_count,
         "Previous MMR leaf count does not match previous tip leaf count in proof"
     );
 
@@ -96,51 +96,51 @@ fn validate_mmr_proofs<H: Hasher>(
 
     // [3] Verify the proofs are valid
     assert!(
-        mmr::verify_mmr_proof::<H>(previous_mmr_root, parent_leaf_inclusion_proof),
+        mmr::verify_mmr_proof::<H>(current_mmr_root, parent_leaf_inclusion_proof),
         "Parent leaf inclusion proof is invalid"
     );
 
     assert!(
-        mmr::verify_mmr_proof::<H>(previous_mmr_root, previous_tip_leaf_inclusion_proof),
+        mmr::verify_mmr_proof::<H>(current_mmr_root, current_tip_leaf_inclusion_proof),
         "Previous tip leaf inclusion proof is invalid"
     );
 
     assert!(
-        mmr::verify_mmr_proof::<H>(previous_mmr_root, parent_retarget_leaf_inclusion_proof),
+        mmr::verify_mmr_proof::<H>(current_mmr_root, parent_retarget_leaf_inclusion_proof),
         "Parent retarget leaf inclusion proof is invalid"
     );
 }
 
 fn validate_reorg_conditions(
     parent_leaf: &BlockLeaf,
-    previous_tip_leaf: &BlockLeaf,
+    current_tip_leaf: &BlockLeaf,
     parent_leaf_hash: &Digest,
-    previous_tip_leaf_hash: &Digest,
+    current_tip_leaf_hash: &Digest,
     disposed_leaf_hashes: &[Digest],
 ) {
-    assert!(
-        previous_tip_leaf.height as i64 - parent_leaf.height as i64
-            == disposed_leaf_hashes.len() as i64,
-        "Disposed leaves should be the difference between the previous tip leaf height and the parent leaf height"
-    );
-
-    if parent_leaf_hash != previous_tip_leaf_hash {
+    if parent_leaf_hash != current_tip_leaf_hash {
         assert!(
             !disposed_leaf_hashes.is_empty(),
             "Disposed leaves should not be empty for a reorg"
         );
     }
+
+    assert!(
+        current_tip_leaf.height as i64 - parent_leaf.height as i64
+            == disposed_leaf_hashes.len() as i64,
+        "Disposed leaves should be the difference between the previous tip leaf height and the parent leaf height"
+    );
 }
 
 pub fn validate_chainwork(
     parent_leaf: &BlockLeaf,
-    previous_tip_leaf: &BlockLeaf,
+    current_tip_leaf: &BlockLeaf,
     new_headers: &[Header],
 ) -> (Vec<U256>, U256) {
     let (new_chain_works, new_chain_cumulative_work) =
         light_client::calculate_cumulative_work(parent_leaf.chainwork_as_u256(), new_headers);
 
-    if new_chain_cumulative_work <= previous_tip_leaf.chainwork_as_u256() {
+    if new_chain_cumulative_work <= current_tip_leaf.chainwork_as_u256() {
         panic!("New chain cumulative work is not greater than previous tip cumulative work");
     }
 
@@ -157,13 +157,13 @@ pub struct BlockPosition {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChainTransition {
     // Previous MMR state
-    pub previous_mmr_root: Digest,
-    pub previous_mmr_bagged_peak: Digest, // bagged peak of the old MMR, when hashed with the leaf count gives the previous MMR root
+    pub current_mmr_root: Digest,
+    pub current_mmr_bagged_peak: Digest, // bagged peak of the old MMR, when hashed with the leaf count gives the previous MMR root
 
     // Block positions
     pub parent: BlockPosition,          // parent of the new chain
     pub parent_retarget: BlockPosition, // retarget block of the parent
-    pub previous_tip: BlockPosition,    // previous tip of the old MMR
+    pub current_tip: BlockPosition,     // previous tip of the old MMR
 
     // New chain data
     pub parent_leaf_peaks: Vec<Digest>, // peaks of the MMR with parent as the tip
@@ -179,21 +179,21 @@ pub struct AuxiliaryLightClientData {
 impl ChainTransition {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        previous_mmr_root: Digest,
-        previous_mmr_bagged_peak: Digest,
+        current_mmr_root: Digest,
+        current_mmr_bagged_peak: Digest,
         parent: BlockPosition,
         parent_retarget: BlockPosition,
-        previous_tip: BlockPosition,
+        current_tip: BlockPosition,
         parent_leaf_peaks: Vec<Digest>,
         disposed_leaf_hashes: Vec<Digest>,
         new_headers: Vec<Header>,
     ) -> Self {
         Self {
-            previous_mmr_root,
-            previous_mmr_bagged_peak,
+            current_mmr_root,
+            current_mmr_bagged_peak,
             parent,
             parent_retarget,
-            previous_tip,
+            current_tip,
             parent_leaf_peaks,
             disposed_leaf_hashes,
             new_headers,
@@ -213,17 +213,17 @@ impl ChainTransition {
             &self.parent.leaf,
             &self.parent_retarget.header,
             &self.parent_retarget.leaf,
-            &self.previous_tip.header,
-            &self.previous_tip.leaf,
+            &self.current_tip.header,
+            &self.current_tip.leaf,
         );
 
         // [1] Precompute leaf hashes and total amount of leaves
         let parent_leaf_hash = self.parent.leaf.hash::<H>();
-        let previous_tip_leaf_hash = self.previous_tip.leaf.hash::<H>();
         let parent_retarget_leaf_hash = self.parent_retarget.leaf.hash::<H>();
+        let current_tip_leaf_hash = self.current_tip.leaf.hash::<H>();
 
         // block heights are 0-indexed so add 1 to get the number of leaves, keep in mind this is only true if the chain begins with the genesis block
-        let previous_tip_chain_leaf_count = self.previous_tip.leaf.height + 1;
+        let current_tip_chain_leaf_count = self.current_tip.leaf.height + 1;
         let parent_chain_leaf_count = self.parent.leaf.height + 1;
 
         // [2] Validate header chain
@@ -235,11 +235,8 @@ impl ChainTransition {
         );
 
         // [3] Validate chainwork and get new chain works
-        let (new_chain_works, _) = validate_chainwork(
-            &self.parent.leaf,
-            &self.previous_tip.leaf,
-            &self.new_headers,
-        );
+        let (new_chain_works, _) =
+            validate_chainwork(&self.parent.leaf, &self.current_tip.leaf, &self.new_headers);
 
         // [4] Create new leaves
         let new_leaves = create_new_leaves(&self.parent.leaf, &self.new_headers, &new_chain_works);
@@ -247,39 +244,37 @@ impl ChainTransition {
         // [5] Validate MMR proofs
         validate_mmr_proofs::<H>(
             &parent_leaf_hash,
-            &previous_tip_leaf_hash,
+            &current_tip_leaf_hash,
             &parent_retarget_leaf_hash,
             &self.parent.inclusion_proof,
-            &self.previous_tip.inclusion_proof,
+            &self.current_tip.inclusion_proof,
             &self.parent_retarget.inclusion_proof,
-            &self.previous_mmr_root,
-            previous_tip_chain_leaf_count,
+            &self.current_mmr_root,
+            current_tip_chain_leaf_count,
         );
 
         // [6-7] Validate reorg conditions
         validate_reorg_conditions(
             &self.parent.leaf,
-            &self.previous_tip.leaf,
+            &self.current_tip.leaf,
             &parent_leaf_hash,
-            &previous_tip_leaf_hash,
+            &current_tip_leaf_hash,
             &self.disposed_leaf_hashes,
         );
 
         assert!(
-            mmr::get_root::<H>(
-                previous_tip_chain_leaf_count,
-                &self.previous_mmr_bagged_peak
-            ) == self.previous_mmr_root,
+            mmr::get_root::<H>(current_tip_chain_leaf_count, &self.current_mmr_bagged_peak)
+                == self.current_mmr_root,
             "Previous MMR root should be the same as the bagged peak + leaf count"
         );
 
-        // [9] validate parent MMR via passing disposed leaves and asserting the root is the  previous
+        // [9] validate parent MMR via passing disposed leaves and asserting the root is the previous
         let mut new_mmr: CompactMerkleMountainRange<H> = CompactMerkleMountainRange::from_peaks(
             &self.parent_leaf_peaks,
             parent_chain_leaf_count,
         );
 
-        new_mmr.validate_mmr_transition(&self.disposed_leaf_hashes, &self.previous_mmr_root);
+        new_mmr.validate_mmr_transition(&self.disposed_leaf_hashes, &self.current_mmr_root);
 
         // [10] append the new leaves to the parent MMR
         for leaf in &new_leaves {
@@ -296,7 +291,7 @@ impl ChainTransition {
 
         // [13] return the Public Input to commit to witness
         let public_input = LightClientPublicInput {
-            previousMmrRoot: self.previous_mmr_root.into(),
+            previousMmrRoot: self.current_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
             compressedLeavesCommitment: new_leaves_commitment.into(),
             tipBlockLeaf: (*all_leaves.last().expect("New leaves should not be empty")).into(),
@@ -551,13 +546,13 @@ mod tests {
             .await
             .unwrap();
 
-        let previous_tip_leaf_proof = client_mmr
+        let current_tip_leaf_proof = client_mmr
             .get_proof(last_appended_element_index, None)
             .await
             .unwrap();
 
-        let previous_tip_leaf = last_appended_leaf;
-        let previous_tip_header = last_appended_header;
+        let current_tip_leaf = last_appended_leaf;
+        let current_tip_header = last_appended_header;
 
         let parent_retarget_height = get_retarget_height(parent_leaf.height) as usize;
         println!("Parent retarget height: {}", parent_retarget_height);
@@ -598,8 +593,8 @@ mod tests {
             "Parent retarget proof is not for the correct leaf"
         );
 
-        let previous_mmr_root = circuit_mmr.get_root();
-        let previous_mmr_bagged_peak = circuit_mmr.bag_peaks().unwrap();
+        let current_mmr_root = circuit_mmr.get_root();
+        let current_mmr_bagged_peak = circuit_mmr.bag_peaks().unwrap();
 
         let btc_headers = EXHAUSTIVE_TEST_HEADERS[478559..478559 + 11]
             .iter()
@@ -607,8 +602,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         let public_input = ChainTransition::new(
-            previous_mmr_root,
-            previous_mmr_bagged_peak,
+            current_mmr_root,
+            current_mmr_bagged_peak,
             BlockPosition {
                 header: parent_header,
                 leaf: parent_leaf,
@@ -620,9 +615,9 @@ mod tests {
                 inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof),
             },
             BlockPosition {
-                header: previous_tip_header,
-                leaf: previous_tip_leaf,
-                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&previous_tip_leaf_proof),
+                header: current_tip_header,
+                leaf: current_tip_leaf,
+                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&current_tip_leaf_proof),
             },
             pre_bch_peaks,
             bch_leaves

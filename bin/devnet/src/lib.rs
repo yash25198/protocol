@@ -730,13 +730,13 @@ mod tests {
             pub inclusion_proof: MMRProof,
         }
                    // Previous MMR state
-            pub previous_mmr_root: Digest,
-            pub previous_mmr_bagged_peak: Digest, // bagged peak of the old MMR, when hashed with the leaf count gives the previous MMR root
+            pub current_mmr_root: Digest,
+            pub current_mmr_bagged_peak: Digest, // bagged peak of the old MMR, when hashed with the leaf count gives the previous MMR root
 
             // Block positions
             pub parent: BlockPosition,          // parent of the new chain
             pub parent_retarget: BlockPosition, // retarget block of the parent
-            pub previous_tip: BlockPosition,    // previous tip of the old MMR
+            pub current_tip: BlockPosition,    // previous tip of the old MMR
 
             // New chain data
             pub parent_leaf_peaks: Vec<Digest>, // peaks of the MMR with parent as the tip
@@ -879,8 +879,8 @@ mod tests {
             .collect::<Vec<Header>>();
 
         let chain_transition = ChainTransition {
-            previous_mmr_root: devnet.contract_data_engine.get_mmr_root().await.unwrap(),
-            previous_mmr_bagged_peak: devnet
+            current_mmr_root: devnet.contract_data_engine.get_mmr_root().await.unwrap(),
+            current_mmr_bagged_peak: devnet
                 .contract_data_engine
                 .get_mmr_bagged_peak()
                 .await
@@ -897,7 +897,7 @@ mod tests {
                 leaf: parent_retarget_leaf,
                 inclusion_proof: parent_retarget_inclusion_proof,
             },
-            previous_tip: BlockPosition {
+            current_tip: BlockPosition {
                 header: parent_header,
                 leaf: parent_leaf,
                 inclusion_proof: parent_inclusion_proof,
