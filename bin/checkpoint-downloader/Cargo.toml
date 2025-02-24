@@ -1,0 +1,22 @@
+[package]
+version = "0.1.0"
+name = "checkpoint-downloader"
+edition = "2021"
+
+[[bin]]
+name = "checkpoint-downloader"
+path = "src/bin/main.rs"
+
+[dependencies]
+rift-sdk = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+bitcoincore-rpc-async2 = { workspace = true }
+bitcoin-light-client-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bitcoin = { workspace = true }
+hex = { workspace = true }
+
+zstd = { workspace = true }
+tempfile = { workspace = true }

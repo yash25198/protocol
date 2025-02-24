@@ -1673,6 +1673,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "checkpoint-downloader"
+version = "0.1.0"
+dependencies = [
+ "bitcoin 0.32.5",
+ "bitcoin-light-client-core",
+ "bitcoincore-rpc-async2",
+ "clap",
+ "hex",
+ "rift-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "zstd 0.13.3",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2354,6 +2371,12 @@ name = "doctest-file"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aac81fa3e28d21450aa4d2ac065992ba96a1d7303efbce51a95f4fd175b67562"
+
+[[package]]
+name = "dotenv"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
 name = "dotenvy"
@@ -3363,6 +3386,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "hypernode"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "bitcoin 0.32.5",
+ "bitcoin-core-rs",
+ "bitcoin-data-engine",
+ "bitcoin-light-client-core",
+ "bitcoincore-rpc-async2",
+ "checkpoint-downloader",
+ "chrono",
+ "clap",
+ "crypto-bigint",
+ "data-engine",
+ "dotenv",
+ "env_logger",
+ "eyre",
+ "futures",
+ "futures-util",
+ "hex",
+ "reqwest 0.12.12",
+ "rift-core",
+ "rift-program",
+ "rift-sdk",
+ "serde",
+ "serde_json",
+ "sol-types",
+ "tokio",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3902,6 +3956,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.2",
+]
+
+[[package]]
+name = "market-maker"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "backoff",
+ "bitcoin 0.32.5",
+ "bitcoin-light-client-core",
+ "bitcoincore-rpc-async2",
+ "checkpoint-downloader",
+ "chrono",
+ "clap",
+ "data-engine",
+ "eyre",
+ "futures",
+ "hex",
+ "reqwest 0.12.12",
+ "rift-core",
+ "rift-sdk",
+ "serde",
+ "serde_json",
+ "sol-types",
+ "tokio",
+ "tokio-rusqlite",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -8541,7 +8623,7 @@ dependencies = [
  "pbkdf2",
  "sha1",
  "time",
- "zstd",
+ "zstd 0.11.2+zstd.1.5.2",
 ]
 
 [[package]]
@@ -8577,7 +8659,16 @@ version = "0.11.2+zstd.1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20cc960326ece64f010d2d2107537f26dc589a6573a316bd5b1dba685fa5fde4"
 dependencies = [
- "zstd-safe",
+ "zstd-safe 5.0.2+zstd.1.5.2",
+]
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe 7.2.3",
 ]
 
 [[package]]
@@ -8591,10 +8682,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "zstd-sys"
-version = "2.0.13+zstd.1.5.6"
+name = "zstd-safe"
+version = "7.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38ff0f21cfee8f97d94cef41359e0c89aa6113028ab0291aa8ca0038995a95aa"
+checksum = "f3051792fbdc2e1e143244dc28c60f73d8470e93f3f9cbd0ead44da5ed802722"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.14+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fb060d4926e4ac3a3ad15d864e99ceb5f343c6b34f5bd6d81ae6ed417311be5"
 dependencies = [
  "cc",
  "pkg-config",
