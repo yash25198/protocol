@@ -13,7 +13,7 @@ members = [
   "crates/rift-core", 
   "crates/rift-program",
   "crates/sol-types",
-  "test-data", "bin/test-utils", "crates/bitcoin-data-engine", "bin/market-maker",
+  "test-data", "bin/sol-utils", "crates/bitcoin-data-engine", "bin/market-maker",
   # "integration-tests"
   ]
 

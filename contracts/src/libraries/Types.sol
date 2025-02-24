@@ -103,6 +103,12 @@ library Types {
         MMRProof tipProof;
     }
 
+    struct DeploymentParams {
+        BlockLeaf tipBlockLeaf;
+        bytes32 mmrRoot;
+        bytes32 circuitVerificationKey;
+    }
+
     // -----------------------------------------------------------------------
     //                             PARAMETER STRUCTS
     // -----------------------------------------------------------------------

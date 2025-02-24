@@ -1,18 +1,20 @@
 [package]
-name = "test-utils"
+name = "sol-utils"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 exclude.workspace = true
 
 [[bin]]
-name = "test-utils"
+name = "sol-utils"
 path = "src/main.rs"
 
 [dependencies]
 rift-core = { workspace = true }
 rift-sdk = { workspace = true }
 bitcoin-light-client-core = { workspace = true }
+checkpoint-downloader = { workspace = true }
+sol-types = { workspace = true }
 
 accumulators.workspace = true
 hex.workspace = true

@@ -5,9 +5,11 @@ use alloy::{
     dyn_abi::{abi::encode, DynSolType, DynSolValue},
     hex,
     primitives::{FixedBytes, U256},
+    rpc::types::Index,
     sol,
     sol_types::SolValue,
 };
+
 use bitcoin_light_client_core::{
     hasher::{Digest, Hasher},
     leaves::BlockLeaf,
@@ -54,6 +56,15 @@ enum Commands {
     HashBlockLeaf {
         #[arg(short, long)]
         abi_encoded_leaf: String,
+    },
+
+    /// Get the deployment params for a given checkpoint file
+    GetDeploymentParams {
+        #[arg(short, long)]
+        checkpoint_file: String,
+
+        #[arg(short, long)]
+        debug: bool,
     },
 }
 
@@ -274,6 +285,33 @@ async fn hash_block_leaf(abi_encoded_leaf: &str) {
     println!("{}", hex::encode(hash));
 }
 
+async fn get_deployment_params(checkpoint_file: &str, debug: bool) {
+    let checkpoint_leaves =
+        checkpoint_downloader::decompress_checkpoint_file(checkpoint_file).unwrap();
+    if debug {
+        for block in checkpoint_leaves.iter() {
+            println!("{}", block);
+        }
+    }
+
+    // create DataEngine
+    let mut data_engine = IndexedMMR::<Keccak256Hasher>::open(&DatabaseLocation::InMemory)
+        .await
+        .unwrap();
+
+    data_engine.batch_append(&checkpoint_leaves).await.unwrap();
+    let mmr_root = data_engine.get_root().await.unwrap();
+    let circuit_verification_key = rift_sdk::get_rift_program_hash();
+
+    let tip_block_leaf = checkpoint_leaves[checkpoint_leaves.len() - 1];
+
+    let deployment_params = sol_types::Types::DeploymentParams {
+        tipBlockLeaf: tip_block_leaf.into(),
+        mmrRoot: mmr_root.into(),
+        circuitVerificationKey: circuit_verification_key.into(),
+    };
+    println!("{}", hex::encode(deployment_params.abi_encode()));
+}
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -291,6 +329,12 @@ async fn main() {
         }
         Commands::HashBlockLeaf { abi_encoded_leaf } => {
             hash_block_leaf(&abi_encoded_leaf).await;
+        }
+        Commands::GetDeploymentParams {
+            checkpoint_file,
+            debug,
+        } => {
+            get_deployment_params(&checkpoint_file, debug).await;
         }
     }
 }

@@ -29,6 +29,7 @@ interface TypeExposer {
             Types.BlockProofParams memory blockProofParams,
             Types.SubmitSwapProofParams memory submitSwapProofParams,
             Types.ReleaseLiquidityParams memory releaseLiquidityParams,
+            Types.DeploymentParams memory deploymentParams,
             // --- ENUMS (as their underlying type: uint8) ---
             Types.SwapState, // Represents Types.SwapState
             Types.ProofType, // Represents Types.ProofType

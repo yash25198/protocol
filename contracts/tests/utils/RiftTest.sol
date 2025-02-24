@@ -486,14 +486,9 @@ contract RiftTest is Test, PRNG {
         return vm.ffi(curlInputs);
     }
 
-    // cargo build --release --bin test-utils
-    function _buildTestUtilsBin() internal returns (bytes memory) {
-        return _callFFI("cargo build --release --bin test-utils");
-    }
-
     function _callTestUtilsGenerateFakeBlockMMRProof(uint32 height) internal returns (bytes memory) {
         string memory cmd = string.concat(
-            "../target/release/test-utils generate-fake-block-mmr-proof --height ",
+            "../target/release/sol-utils generate-fake-block-mmr-proof --height ",
             vm.toString(height)
         );
         return _callFFI(cmd);
@@ -504,7 +499,7 @@ contract RiftTest is Test, PRNG {
         uint32 confirmations
     ) internal returns (bytes memory) {
         string memory cmd = string.concat(
-            "../target/release/test-utils generate-fake-block-with-confirmations-mmr-proof --height ",
+            "../target/release/sol-utils generate-fake-block-with-confirmations-mmr-proof --height ",
             vm.toString(height),
             " --confirmations ",
             vm.toString(confirmations)
@@ -514,7 +509,7 @@ contract RiftTest is Test, PRNG {
 
     function _callTestUtilsHashBlockLeaf(bytes memory leaf) internal returns (bytes32) {
         string memory cmd = string.concat(
-            "../target/release/test-utils hash-block-leaf --abi-encoded-leaf ",
+            "../target/release/sol-utils hash-block-leaf --abi-encoded-leaf ",
             vm.toString(leaf)
         );
         return bytes32(_callFFI(cmd));

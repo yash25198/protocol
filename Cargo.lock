@@ -6177,6 +6177,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sol-utils"
+version = "0.1.0"
+dependencies = [
+ "accumulators",
+ "alloy",
+ "bitcoin 0.32.5",
+ "bitcoin-light-client-core",
+ "checkpoint-downloader",
+ "chrono",
+ "clap",
+ "env_logger",
+ "eyre",
+ "futures",
+ "futures-util",
+ "hex",
+ "log",
+ "rift-core",
+ "rift-sdk",
+ "sol-types",
+ "tokio",
+]
+
+[[package]]
 name = "sp1-build"
 version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7301,27 +7324,6 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "test-utils"
-version = "0.1.0"
-dependencies = [
- "accumulators",
- "alloy",
- "bitcoin 0.32.5",
- "bitcoin-light-client-core",
- "chrono",
- "clap",
- "env_logger",
- "eyre",
- "futures",
- "futures-util",
- "hex",
- "log",
- "rift-core",
- "rift-sdk",
- "tokio",
 ]
 
 [[package]]

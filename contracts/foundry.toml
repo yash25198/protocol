@@ -79,16 +79,10 @@ access = "read-write"
 path = "./"
 
 [rpc_endpoints]
-sepolia = "${SEPOLIA_RPC_URL}"
-holesky = "${HOLESKY_RPC_URL}"
-arbitrum-sepolia = "${ARBITRUM_SEPOLIA_RPC_URL}"
-arbitrum = "${ARBITRUM_RPC_URL}"
+base = "${BASE_RPC_URL}"
 
 [etherscan]
-arbitrum-sepolia = { key = "${ARBITRUM_SEPOLIA_ETHERSCAN_API_KEY}" }
-sepolia = { key = "${ETHERSCAN_API_KEY}" }
-holesky = { key = "${ETHERSCAN_API_KEY}" }
-arbitrum = { key = "${ARBITRUM_SEPOLIA_ETHERSCAN_API_KEY}" }
+base = { key = "${BASE_ETHERSCAN_API_KEY}" }
 
 [dependencies]
 "forge-std" = "1.9.3"
