@@ -19,7 +19,9 @@ async fn main() -> Result<()> {
 
     // Parse CLI args
     let config = ServerConfig::parse();
-    let checkpoint_leaves = vec![get_genesis_leaf()];
+    let checkpoint_leaves =
+        checkpoint_downloader::decompress_checkpoint_file(&config.checkpoint_file).unwrap();
+
     let data_engine_server = DataEngineServer::start(config, checkpoint_leaves).await?;
     data_engine_server.server_handle.await?;
     Ok(())

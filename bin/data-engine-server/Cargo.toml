@@ -11,6 +11,8 @@ path = "src/bin/main.rs"
 
 [dependencies]
 bitcoin-light-client-core.workspace = true
+checkpoint-downloader.workspace = true
+
 axum.workspace = true
 alloy.workspace = true
 data-engine.workspace = true

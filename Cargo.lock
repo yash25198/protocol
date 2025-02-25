@@ -2198,6 +2198,7 @@ dependencies = [
  "alloy",
  "axum",
  "bitcoin-light-client-core",
+ "checkpoint-downloader",
  "clap",
  "data-engine",
  "eyre",

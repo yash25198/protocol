@@ -21,11 +21,18 @@ use tower_http::cors::{Any, CorsLayer};
 #[derive(Clone, Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct ServerConfig {
+    #[arg(short, long)]
     pub evm_rpc_websocket_url: String,
+    #[arg(short, long)]
     pub rift_exchange_address: String,
-    pub database_location: DatabaseLocation,
+    #[arg(short, long)]
+    pub checkpoint_file: String,
+    #[arg(short, long)]
     pub deploy_block_number: u64,
+    #[arg(short, long)]
     pub port: u16,
+    #[arg(short, long)]
+    pub database_location: DatabaseLocation,
 }
 
 /// DataEngineServer holds the underlying data engine, starting the Axum server in the background.
