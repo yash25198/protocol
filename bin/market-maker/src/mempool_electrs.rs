@@ -25,9 +25,17 @@ pub struct Utxo {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TxStatus {
     pub confirmed: bool,
+    #[serde(default)]
     pub block_height: u32,
+    #[serde(default = "empty_string")]
     pub block_hash: String,
+    #[serde(default)]
     pub block_time: u64,
+}
+
+// Helper function to provide default empty string
+fn empty_string() -> String {
+    String::new()
 }
 
 impl MempoolElectrsClient {
