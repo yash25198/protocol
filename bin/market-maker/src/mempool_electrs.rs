@@ -51,7 +51,9 @@ impl MempoolElectrsClient {
     pub async fn get_address_utxos(&self, address: &str) -> Result<Vec<Utxo>> {
         let url = format!("{}/api/address/{}/utxo", self.url, address);
 
+        println!("Getting UTXOs for address: {}", address);
         let response = self.client.get(&url).send().await?;
+        println!("Response: {:?}", response);
 
         if !response.status().is_success() {
             return Err(eyre::eyre!(
@@ -61,6 +63,7 @@ impl MempoolElectrsClient {
         }
 
         let utxos: Vec<Utxo> = response.json().await?;
+        println!("UTXOs: {:?}", utxos);
 
         Ok(utxos)
     }
