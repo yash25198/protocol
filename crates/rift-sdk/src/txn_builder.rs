@@ -13,19 +13,18 @@ use bitcoin::{
     ScriptBuf, Sequence, TxOut, Txid,
 };
 use rift_core::vaults::hash_deposit_vault;
-use tokio::time::Instant;
 
 use crate::errors::{Result, RiftSdkError};
-use bitcoin_light_client_core::leaves::BlockLeaf;
-use bitcoincore_rpc_async::jsonrpc::Transport;
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
 use sol_types::Types::DepositVault;
+use std::io::Read;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::time::Duration;
 
+#[derive(Debug)]
 pub struct P2WPKHBitcoinWallet {
     pub secret_key: SecretKey,
     pub public_key: String,
@@ -56,6 +55,67 @@ impl P2WPKHBitcoinWallet {
             network,
         );
         Self::new(secret_key, public_key.to_string(), address)
+    }
+
+    /// Creates a wallet from a BIP39 mnemonic phrase.
+    ///
+    /// # Arguments
+    ///
+    /// * `mnemonic` - The BIP39 mnemonic phrase as a string
+    /// * `passphrase` - Optional passphrase for additional security
+    /// * `network` - The Bitcoin network to use
+    /// * `derivation_path` - Optional custom derivation path, defaults to BIP84 (m/84'/0'/0'/0/0 for mainnet)
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the wallet or an error
+    pub fn from_mnemonic(
+        mnemonic: &str,
+        passphrase: Option<&str>,
+        network: Network,
+        derivation_path: Option<&str>,
+    ) -> Result<Self> {
+        use bip39::{Language, Mnemonic};
+        use bitcoin::bip32::{DerivationPath, Xpriv};
+
+        // Parse and validate the mnemonic
+        let mnemonic = Mnemonic::parse_in(Language::English, mnemonic)
+            .map_err(|_| RiftSdkError::InvalidMnemonic)?;
+
+        // Determine the appropriate derivation path based on network if not provided
+        let path_str = derivation_path.unwrap_or_else(|| match network {
+            Network::Bitcoin => "m/84'/0'/0'/0/0", // BIP84 for mainnet
+            _ => "m/84'/1'/0'/0/0",                // BIP84 for testnet/regtest
+        });
+
+        // Parse the derivation path
+        let derivation_path =
+            DerivationPath::from_str(path_str).map_err(|_| RiftSdkError::InvalidDerivationPath)?;
+
+        // Create seed from mnemonic and optional passphrase
+        let seed = mnemonic.to_seed(passphrase.unwrap_or(""));
+
+        // Create master key and derive the child key
+        let xpriv =
+            Xpriv::new_master(network, &seed[..]).map_err(|_| RiftSdkError::KeyDerivationFailed)?;
+
+        let child_xpriv = xpriv
+            .derive_priv(&Secp256k1::new(), &derivation_path)
+            .map_err(|_| RiftSdkError::KeyDerivationFailed)?;
+
+        // Convert to private key and extract secret key
+        let private_key = PrivateKey::new(child_xpriv.private_key, network);
+        let secret_key = private_key.inner;
+
+        // Generate public key and address
+        let secp = Secp256k1::new();
+        let public_key = PublicKey::from_private_key(&secp, &private_key);
+        let address = Address::p2wpkh(
+            &CompressedPublicKey::from_private_key(&secp, &private_key).unwrap(),
+            network,
+        );
+
+        Ok(Self::new(secret_key, public_key.to_string(), address))
     }
 
     pub fn get_p2wpkh_script(&self) -> ScriptBuf {
@@ -194,4 +254,20 @@ fn sign_transaction(
     tx.input[input_index].witness = witness;
 
     tx.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_mnemonic() {
+        let wallet = P2WPKHBitcoinWallet::from_mnemonic(
+            "panther denial match meadow kingdom crouch convince magic inherit assault response gadget govern benefit forest drift power curious virtual there grid film anxiety stand",
+            None,
+            Network::Bitcoin,
+            None,
+        );
+        println!("Wallet: {:?}", wallet);
+    }
 }

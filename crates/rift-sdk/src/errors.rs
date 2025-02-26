@@ -31,6 +31,15 @@ pub enum RiftSdkError {
 
     #[error("Parent validation failed: {0}")]
     ParentValidationFailed(String),
+
+    #[error("Invalid mnemonic")]
+    InvalidMnemonic,
+
+    #[error("Invalid derivation path")]
+    InvalidDerivationPath,
+
+    #[error("Key derivation failed")]
+    KeyDerivationFailed,
 }
 
 pub type Result<T> = std::result::Result<T, RiftSdkError>;

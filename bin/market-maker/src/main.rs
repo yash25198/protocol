@@ -1,7 +1,12 @@
 mod mempool_electrs;
-
 use crate::mempool_electrs::MempoolElectrsClient;
+use alloy::consensus::BlockHeader;
+use alloy::eips::BlockId;
+use alloy::network::BlockResponse;
 use alloy::primitives::Address;
+use alloy::providers::Provider;
+use alloy::pubsub::PubSubFrontend;
+use alloy::rpc::types::BlockTransactionsKind;
 use alloy::sol_types::SolValue;
 use bitcoincore_rpc_async::RpcApi;
 use clap::Parser;
@@ -51,9 +56,9 @@ pub struct MakerConfig {
     #[arg(long, env = "BTC_RPC_PASS")]
     btc_rpc_pass: String,
 
-    /// Market Maker's Bitcoin Private Key (WIF format)
-    #[arg(long, env = "BTC_PRIVATE_KEY")]
-    btc_private_key: String,
+    /// Market Maker's Bitcoin Mnemonic
+    #[arg(long, env = "BTC_MNEMONIC")]
+    btc_mnemonic: String,
 
     /// Market Maker's Ethereum Address
     #[arg(long, env = "ETH_ADDRESS")]
@@ -68,7 +73,7 @@ pub struct MakerConfig {
     poll_interval: u64,
 
     /// Fee amount in satoshis for swap transactions
-    #[arg(long, env = "FEE_SATS", default_value = "1000")]
+    #[arg(long, env = "FEE_SATS", default_value = "2000")]
     fee_sats: u64,
 
     /// Checkpoint leaves
@@ -94,6 +99,7 @@ struct MarketMaker {
     data_engine: DataEngine,
     config: MakerConfig,
     mempool_electrs_client: Arc<MempoolElectrsClient>,
+    provider: Arc<dyn Provider<PubSubFrontend>>,
 }
 
 fn get_qualified_payment_database_path(database_location: String) -> String {
@@ -101,6 +107,8 @@ fn get_qualified_payment_database_path(database_location: String) -> String {
     let payment_db_path = path.join("payment.db");
     payment_db_path.to_str().expect("Invalid path").to_string()
 }
+
+const LOCKUP_PERIOD: u64 = 2 * 60 * 60; // 2 hours
 
 impl MarketMaker {
     /// Create a new market maker instance
@@ -118,13 +126,14 @@ impl MarketMaker {
         let mempool_electrs_client =
             Arc::new(MempoolElectrsClient::new(&config.mempool_electrs_url));
 
-        let provider = Arc::new(create_websocket_provider(&config.evm_ws_url).await?);
+        let provider: Arc<dyn Provider<PubSubFrontend>> =
+            Arc::new(create_websocket_provider(&config.evm_ws_url).await?);
         let checkpoint_leaves =
             checkpoint_downloader::decompress_checkpoint_file(&config.checkpoint_file).unwrap();
 
         let data_engine = DataEngine::start(
             &config.db_location,
-            provider,
+            provider.clone(),
             config.rift_contract_address,
             config.rift_deployment_block_number,
             checkpoint_leaves,
@@ -162,12 +171,14 @@ impl MarketMaker {
             .await?,
         );
 
-        // Initialize wallet from private key
-        let network = bitcoin::Network::Bitcoin; // Use appropriate network
-        let private_key = bitcoin::PrivateKey::from_str(&config.btc_private_key)?;
-        let secret_key = private_key.inner;
-
-        let wallet = P2WPKHBitcoinWallet::from_secret_bytes(&secret_key.secret_bytes(), network);
+        // Initialize wallet from mnemonic
+        let wallet = P2WPKHBitcoinWallet::from_mnemonic(
+            &config.btc_mnemonic,
+            None,
+            bitcoin::Network::Bitcoin,
+            None,
+        )?;
+        println!("Wallet: {:?}", wallet);
 
         // Parse ETH address
         let eth_address = Address::from_str(&config.eth_address)
@@ -181,6 +192,7 @@ impl MarketMaker {
             data_engine,
             config: cc_config,
             mempool_electrs_client,
+            provider,
         })
     }
 
@@ -253,6 +265,8 @@ impl MarketMaker {
             .get_deposits_for_recipient(self.eth_address, self.config.rift_deployment_block_number)
             .await?;
 
+        info!("Found {} fillable deposits", deposits.len());
+
         Ok(deposits)
     }
 
@@ -262,6 +276,13 @@ impl MarketMaker {
         deposits: Vec<DepositVault>,
     ) -> Result<Vec<DepositVault>> {
         let mut unprocessed = Vec::new();
+
+        let latest_block = self
+            .provider
+            .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
+            .await?;
+
+        let latest_block_timestamp = latest_block.unwrap().header().timestamp();
 
         for deposit in deposits {
             let commitment = format!(
@@ -280,6 +301,13 @@ impl MarketMaker {
                     )?;
 
                     let count: i64 = stmt.query_row(params![commitment], |row| row.get(0))?;
+
+                    if latest_block_timestamp
+                        < deposit.depositTimestamp
+                            + (LOCKUP_PERIOD * deposit.confirmationBlocks as u64)
+                    {
+                        return Ok(true);
+                    }
 
                     Ok::<_, tokio_rusqlite::Error>(count > 0)
                 })
@@ -323,11 +351,13 @@ impl MarketMaker {
 
         let canon_txid: bitcoin::Txid = bitcoin::consensus::deserialize(
             &bitcoincore_rpc_async::bitcoin::consensus::serialize(&txid),
-        )?;
+        )
+        .unwrap();
 
         let canon_tx: bitcoin::Transaction = bitcoin::consensus::deserialize(
             &bitcoincore_rpc_async::bitcoin::consensus::serialize(&tx),
-        )?;
+        )
+        .unwrap();
 
         // Build the transaction paying to the deposit's scriptPubKey
         let payment_tx = build_rift_payment_transaction(

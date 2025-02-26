@@ -174,6 +174,8 @@ pub async fn add_deposit(
     let deposit_vault_str = serde_json::to_string(&deposit)
         .map_err(|e| eyre::eyre!("Failed to serialize DepositVault: {:?}", e))?;
 
+    println!("Adding deposit: {:?}", deposit);
+
     conn.call(move |conn| {
         conn.execute(
             r#"

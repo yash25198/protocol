@@ -206,32 +206,106 @@ pub async fn listen_for_events(
     deploy_block_number: u64,
 ) -> Result<()> {
     let rift_exchange_address = Address::from_str(rift_exchange_address)?;
-    let filter = Filter::new()
+
+    // First, get the current block number
+    let current_block = provider.get_block_number().await?;
+    info!("Current block number: {}", current_block);
+
+    // Create filter for historical logs from deploy_block_number to current_block (inclusive)
+    let historical_filter = Filter::new()
         .address(rift_exchange_address)
-        .from_block(BlockNumberOrTag::Number(deploy_block_number));
+        .from_block(BlockNumberOrTag::Number(deploy_block_number))
+        .to_block(BlockNumberOrTag::Number(current_block));
 
-    let sub = provider.subscribe_logs(&filter).await?;
+    // Fetch all historical logs
+    info!(
+        "Fetching historical logs from block {} to {}",
+        deploy_block_number, current_block
+    );
+    let historical_logs = provider.get_logs(&historical_filter).await?;
+
+    // Process historical logs
+    for log in historical_logs.iter() {
+        process_log(log, db_conn, &indexed_mmr).await?;
+    }
+
+    info!("Processed {} historical logs", historical_logs.len());
+
+    // Get the latest block number again to ensure we don't miss any blocks
+    // that might have been produced while processing historical logs
+    let latest_block = provider.get_block_number().await?;
+    info!(
+        "Latest block after processing historical logs: {}",
+        latest_block
+    );
+
+    // Check for any logs that might have been emitted during historical processing
+    if latest_block > current_block {
+        let gap_filter = Filter::new()
+            .address(rift_exchange_address)
+            .from_block(BlockNumberOrTag::Number(current_block + 1))
+            .to_block(BlockNumberOrTag::Number(latest_block));
+
+        let gap_logs = provider.get_logs(&gap_filter).await?;
+        info!(
+            "Found {} logs in the gap between {} and {}",
+            gap_logs.len(),
+            current_block + 1,
+            latest_block
+        );
+
+        // Process gap logs
+        for log in gap_logs {
+            process_log(&log, db_conn, &indexed_mmr).await?;
+        }
+    }
+
+    // Create subscription filter for new logs starting after the latest processed block
+    let subscription_filter = Filter::new()
+        .address(rift_exchange_address)
+        .from_block(BlockNumberOrTag::Number(latest_block + 1));
+
+    // Subscribe to new logs
+    let sub = provider.subscribe_logs(&subscription_filter).await?;
     let mut stream = sub.into_stream();
+    info!(
+        "Subscribed to new logs starting from block {}",
+        latest_block + 1
+    );
 
+    // Now process the subscription stream
     while let Some(log) = stream.next().await {
-        // If there's no topic then that's a critical error.
-        let topic = log
-            .topic0()
-            .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
+        process_log(&log, db_conn, &indexed_mmr).await?;
+    }
 
-        match *topic {
-            RiftExchange::VaultsUpdated::SIGNATURE_HASH => {
-                handle_vault_updated_event(&log, db_conn).await?;
-            }
-            RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
-                handle_swap_updated_event(&log, db_conn).await?;
-            }
-            RiftExchange::BitcoinLightClientUpdated::SIGNATURE_HASH => {
-                handle_bitcoin_light_client_updated_event(&log, indexed_mmr.clone()).await?;
-            }
-            _ => {
-                warn!("Unknown event topic");
-            }
+    Ok(())
+}
+
+// Extract the log processing logic to avoid code duplication
+async fn process_log(
+    log: &Log,
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+    indexed_mmr: &Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+) -> Result<()> {
+    info!("Processing log: {:?}", log);
+
+    // If there's no topic then that's a critical error.
+    let topic = log
+        .topic0()
+        .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
+
+    match *topic {
+        RiftExchange::VaultsUpdated::SIGNATURE_HASH => {
+            handle_vault_updated_event(log, db_conn).await?;
+        }
+        RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
+            handle_swap_updated_event(log, db_conn).await?;
+        }
+        RiftExchange::BitcoinLightClientUpdated::SIGNATURE_HASH => {
+            handle_bitcoin_light_client_updated_event(log, indexed_mmr.clone()).await?;
+        }
+        _ => {
+            warn!("Unknown event topic");
         }
     }
 
