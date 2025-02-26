@@ -12,7 +12,7 @@ use bitcoincore_rpc_async::RpcApi;
 use clap::Parser;
 use data_engine::engine::DataEngine;
 use eyre::{eyre, Result};
-use mempool_electrs::Utxo;
+use mempool_electrs::{TxStatus, Utxo};
 use rift_core::vaults::hash_deposit_vault;
 use rift_sdk::bindings::Types::DepositVault;
 use rift_sdk::{
@@ -21,7 +21,7 @@ use rift_sdk::{
     txn_builder::{build_rift_payment_transaction, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
-use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use tokio::time::sleep;
 use tokio_rusqlite::{params, Connection};
 use tracing::{error, info};
@@ -100,6 +100,7 @@ struct MarketMaker {
     config: MakerConfig,
     mempool_electrs_client: Arc<MempoolElectrsClient>,
     provider: Arc<dyn Provider<PubSubFrontend>>,
+    mempool_utxo: Option<Utxo>,
 }
 
 fn get_qualified_payment_database_path(database_location: String) -> String {
@@ -193,11 +194,12 @@ impl MarketMaker {
             config: cc_config,
             mempool_electrs_client,
             provider,
+            mempool_utxo: None,
         })
     }
 
     /// Run the market maker loop
-    async fn run(&self) -> Result<()> {
+    async fn run(&mut self) -> Result<()> {
         info!("Starting market maker with address: {}", self.eth_address);
         info!("Bitcoin wallet address: {}", self.wallet.address);
 
@@ -216,7 +218,7 @@ impl MarketMaker {
     }
 
     /// Process fillable swaps
-    async fn process_fillable_swaps(&self) -> Result<usize> {
+    async fn process_fillable_swaps(&mut self) -> Result<usize> {
         // 1. Fetch deposits from the data engine
         let fillable_deposits = self.fetch_fillable_deposits().await?;
         if fillable_deposits.is_empty() {
@@ -303,9 +305,23 @@ impl MarketMaker {
                     let count: i64 = stmt.query_row(params![commitment], |row| row.get(0))?;
 
                     if latest_block_timestamp
-                        < deposit.depositTimestamp
+                        > deposit.depositTimestamp
                             + (LOCKUP_PERIOD * deposit.confirmationBlocks as u64)
                     {
+                        println!("Deposit has expired: {}", deposit.vaultIndex);
+                        return Ok(true);
+                    }
+
+                    if count > 0 {
+                        println!("Deposit has already been processed: {}", deposit.vaultIndex);
+                    }
+
+                    let ignored_deposits: Vec<u32> = (16..=27).collect();
+
+                    if ignored_deposits
+                        .contains(&u32::try_from(deposit.vaultIndex).unwrap_or_default())
+                    {
+                        println!("Deposit is manually ignored: {}", deposit.vaultIndex);
                         return Ok(true);
                     }
 
@@ -322,16 +338,21 @@ impl MarketMaker {
     }
 
     /// Process a single deposit by creating and sending a Bitcoin transaction
-    async fn process_deposit(&self, deposit: DepositVault) -> Result<()> {
+    async fn process_deposit(&mut self, deposit: DepositVault) -> Result<()> {
         info!(
             "Processing deposit with expected sats: {}",
             deposit.expectedSats
         );
 
         // Find a suitable UTXO
-        let utxos = self
-            .find_suitable_utxos(deposit.expectedSats + self.config.fee_sats)
-            .await?;
+        let utxos = if let Some(utxo) = self.mempool_utxo.clone() {
+            println!("Using calculated mempool UTXO");
+            vec![utxo]
+        } else {
+            println!("Finding suitable UTXOs");
+            self.find_suitable_utxos(deposit.expectedSats + self.config.fee_sats)
+                .await?
+        };
 
         if utxos.is_empty() {
             return Err(eyre!("No suitable UTXOs found"));
@@ -386,16 +407,30 @@ impl MarketMaker {
         let now = chrono::Utc::now().timestamp();
 
         let cc_commitment = commitment.clone();
+        let cc_tx_hex = tx_hex.clone();
         self.payment_database_connection
             .call(move |conn| {
                 conn.execute(
                 "INSERT INTO processed_swaps (deposit_commitment, txid, amount_sats, timestamp) 
                  VALUES (?1, ?2, ?3, ?4)",
-                params![commitment.clone(), tx_hex, deposit.expectedSats, now],
+                params![commitment.clone(), cc_tx_hex, deposit.expectedSats, now],
             )?;
                 Ok::<_, tokio_rusqlite::Error>(())
             })
             .await?;
+
+        self.mempool_utxo = Some(Utxo {
+            txid: tx_hex,
+            vout: 2,
+            // set this to comically high value to indicate that it's a mempool UTXO
+            value: u64::MAX - 1,
+            status: TxStatus {
+                confirmed: false,
+                block_height: 0,
+                block_hash: String::new(),
+                block_time: 0,
+            },
+        });
 
         info!(
             "Recorded transaction for deposit commitment {}",
@@ -412,18 +447,21 @@ impl MarketMaker {
             .get_address_utxos(&self.wallet.address.to_string())
             .await?;
 
-        let suitable_utxos = unspent
+        let mut suitable_utxos: Vec<Utxo> = unspent
             .iter()
             // TODO: Do we care if it's confirmed or not?
             .filter(|utxo| utxo.value >= required_amount)
             .cloned()
             .collect();
 
+        // sort by value (with highest value first)
+        suitable_utxos.sort_by_key(|utxo| Reverse(utxo.value));
+
         Ok(suitable_utxos)
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
@@ -432,7 +470,7 @@ async fn main() -> Result<()> {
     let config = MakerConfig::parse();
 
     // Create and run the market maker
-    let market_maker = MarketMaker::new(config).await?;
+    let mut market_maker = MarketMaker::new(config).await?;
     market_maker.run().await?;
 
     Ok(())
