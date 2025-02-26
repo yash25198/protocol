@@ -1,6 +1,6 @@
 use alloy::hex;
 use alloy::primitives::Address;
-use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::Method;
 use axum::response::IntoResponse;
 use axum::{extract::State, routing::get, Json, Router};
@@ -49,9 +49,12 @@ impl DataEngineServer {
     fn spawn_server(data_engine: Arc<DataEngine>, port: u16) -> JoinHandle<()> {
         // Build the Axum application.
         let cors = CorsLayer::new()
-            .allow_methods([Method::GET, Method::POST])
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
             .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
-            .allow_origin(allow_rift_exchange_and_localhost());
+            .allow_origin(allow_rift_exchange_and_localhost())
+            .allow_credentials(true)
+            .expose_headers([CONTENT_TYPE, CONTENT_LENGTH])
+            .max_age(std::time::Duration::from_secs(3600));
 
         let app = Router::new()
             .route("/swaps", get(get_swaps_for_address))
@@ -120,7 +123,11 @@ impl DataEngineServer {
 
 fn allow_rift_exchange_and_localhost() -> tower_http::cors::AllowOrigin {
     tower_http::cors::AllowOrigin::predicate(|origin, _| {
-        let allowed_domains = vec!["http://localhost:3000", "http://localhost:8000"];
+        let allowed_domains = vec![
+            "http://localhost:3000",
+            "http://localhost:8000",
+            "https://app.rift.exchange",
+        ];
         let regex = Regex::new(r"^https://.*\.rift\.exchange$").unwrap();
         let origin_str = origin.to_str().unwrap_or("");
         allowed_domains.contains(&origin_str) || regex.is_match(origin_str)
