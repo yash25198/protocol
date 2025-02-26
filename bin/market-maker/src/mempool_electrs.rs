@@ -62,7 +62,10 @@ impl MempoolElectrsClient {
             ));
         }
 
-        let utxos: Vec<Utxo> = response.json().await?;
+        let body = response.text().await?;
+        println!("Response body: {}", body);
+
+        let utxos: Vec<Utxo> = serde_json::from_str(&body)?;
         println!("UTXOs: {:?}", utxos);
 
         Ok(utxos)
