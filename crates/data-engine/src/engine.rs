@@ -278,6 +278,8 @@ pub async fn listen_for_events(
         process_log(&log, db_conn, &indexed_mmr).await?;
     }
 
+    println!("Subscription stream closed");
+
     Ok(())
 }
 
