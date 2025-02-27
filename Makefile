@@ -1,11 +1,11 @@
 sync:
 	cd contracts && forge soldeer install && forge build  && ./sync-artifacts.sh
 
-build: | sync
+build: 
 	cargo build --release
 
-test-contracts: | sync 
-	cargo build --release --bin test-utils 
+test-contracts: 
+	cargo build --release --bin sol-utils 
 	cd contracts && forge test
 
 test-crates: | build
