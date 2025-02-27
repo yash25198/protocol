@@ -174,6 +174,7 @@ impl RiftDevnet {
         funded_evm_address: Option<String>,
         funded_bitcoin_address: Option<String>,
         fork_config: Option<ForkConfig>,
+        data_engine_db_location: DatabaseLocation,
     ) -> Result<(Self, u64)> {
         println!("Setting up RiftDevnet...");
         // 1) Bitcoin side
@@ -193,7 +194,7 @@ impl RiftDevnet {
         info!("Seeding data engine with checkpoint leaves...");
         let t = Instant::now();
         let mut contract_data_engine =
-            DataEngine::seed(&DatabaseLocation::InMemory, checkpoint_leaves).await?;
+            DataEngine::seed(&data_engine_db_location, checkpoint_leaves).await?;
         info!("Data engine seeded in {:?}", t.elapsed());
 
         // 3) Start EVM side
@@ -405,6 +406,7 @@ mod tests {
             /*funded_evm_address=*/ Some(maker_evm_address.to_string()),
             /*funded_bitcoin_address=*/ None,
             /*fork_config=*/ None,
+            /*data_engine_db_location=*/ DatabaseLocation::InMemory,
         )
         .await
         .expect("Failed to set up devnet");

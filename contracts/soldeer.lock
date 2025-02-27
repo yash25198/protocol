@@ -1,34 +1,30 @@
-[[dependencies]]
-name = "@openzeppelin-contracts"
-version = "5.0.2"
-url = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/5_0_2_14-03-2024_06:11:59_contracts.zip"
-checksum = "8bc4f0acc7c187771b878d46f7de4bfad1acad2eb5d096d9d05d34035853f5c3"
-integrity = "55881f6114aa36158566ef52b486d9d96b217c3e47d0e24bbd4994a8cfb5ee7c"
 
 [[dependencies]]
 name = "forge-std"
 version = "1.9.3"
-url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_3_30-09-2024_08:27:09_forge-std-1.9.zip"
+source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_3_30-09-2024_08:27:09_forge-std-1.9.zip"
 checksum = "351b6f9cde3d9476cc07e48c1bca6b7fd93fa16dd9b450e5ad5d169d1dbd5938"
-integrity = "d53734fbd7201cd9e44de730ae045ed8958dd2c7b9493c30b322f6e6c21ca8b2"
 
 [[dependencies]]
-name = "solady"
-version = "0.0.259"
-url = "https://soldeer-revisions.s3.amazonaws.com/solady/0_0_259_19-10-2024_10:30:34_solady.zip"
-checksum = "3fab02016eeb3e2d5710455faefc99fb6101d00bb95f5e96110cd301a39e2be7"
-integrity = "417cd0e1384c6a2716996d80b5628268af8a9b063d6c506b7506954c5ea42de6"
-
-[[dependencies]]
-name = "solmate"
-version = "6.7.0"
-url = "https://soldeer-revisions.s3.amazonaws.com/solmate/6_7_0_22-01-2024_13:21:00_solmate.zip"
-checksum = "dd0f08cdaaaad1de0ac45993d4959351ba89c2d9325a0b5df5570357064f2c33"
-integrity = "ec330877af853f9d34b2b1bf692fb33c9f56450625f5c4abdcf0d3405839730e"
+name = "@openzeppelin-contracts"
+version = "5.0.2"
+source = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/5_0_2_14-03-2024_06:11:59_contracts.zip"
+checksum = "8bc4f0acc7c187771b878d46f7de4bfad1acad2eb5d096d9d05d34035853f5c3"
 
 [[dependencies]]
 name = "sp1-contracts"
 version = "4.0.0"
-url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip"
+source = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip"
 checksum = "f44ad2210b56cc2049168f5b3b13471702c4de261bcc557a3a95efc3d4e41055"
-integrity = "8844dfbe5848f01e6a9fdb525f0e3c6bb777b463a8b970caa94eb54ea5f59148"
+
+[[dependencies]]
+name = "solmate"
+version = "6.7.0"
+source = "https://soldeer-revisions.s3.amazonaws.com/solmate/6_7_0_22-01-2024_13:21:00_solmate.zip"
+checksum = "dd0f08cdaaaad1de0ac45993d4959351ba89c2d9325a0b5df5570357064f2c33"
+
+[[dependencies]]
+name = "solady"
+version = "0.0.259"
+source = "https://soldeer-revisions.s3.amazonaws.com/solady/0_0_259_19-10-2024_10:30:34_solady.zip"
+checksum = "3fab02016eeb3e2d5710455faefc99fb6101d00bb95f5e96110cd301a39e2be7"

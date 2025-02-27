@@ -3716,6 +3716,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "integration-tests"
+version = "0.1.0"
+dependencies = [
+ "bitcoin-light-client-core",
+ "data-engine",
+ "devnet",
+ "rift-sdk",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "interprocess"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5466,6 +5478,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

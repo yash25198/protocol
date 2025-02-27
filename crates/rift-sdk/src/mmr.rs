@@ -22,6 +22,7 @@ use bitcoin_light_client_core::hasher::{Digest as LeafDigest, Hasher as LeafHash
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoin_light_client_core::mmr::get_root as circuit_get_root;
 use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
+use tracing::info;
 
 use crate::errors::{Result, RiftSdkError};
 use crate::DatabaseLocation;
@@ -343,7 +344,15 @@ impl<H: LeafHasher> IndexedMMR<H> {
     /// Batch append leaves, storing them in the accumulators MMR and the reverse index.
     pub async fn batch_append(&mut self, leaves: &[BlockLeaf]) -> Result<Vec<AppendResult>> {
         let mut append_results = Vec::new();
-        for leaf in leaves {
+        let total_leaves = leaves.len();
+
+        info!("Starting to append {} leaves", total_leaves);
+
+        let start_time = std::time::Instant::now();
+        let update_interval = std::time::Duration::from_secs(2); // Update stats every 2 seconds
+        let mut last_update = start_time;
+
+        for (i, leaf) in leaves.iter().enumerate() {
             let leaf_hash = leaf.hash::<H>();
             let leaf_hash_hex = digest_to_hex(&leaf_hash);
 
@@ -357,8 +366,72 @@ impl<H: LeafHasher> IndexedMMR<H> {
                 .insert(&leaf_hash, append_res.element_index, leaf)
                 .await?;
             append_results.push(append_res);
+
+            // Display progress stats at regular intervals
+            let now = std::time::Instant::now();
+            if i == 0 || i == total_leaves - 1 || now.duration_since(last_update) >= update_interval
+            {
+                let processed = i + 1;
+                let elapsed = now.duration_since(start_time);
+                let leaves_per_second = processed as f64 / elapsed.as_secs_f64();
+
+                // Calculate estimated time remaining
+                let remaining_leaves = total_leaves - processed;
+                let estimated_remaining_secs = if leaves_per_second > 0.0 {
+                    remaining_leaves as f64 / leaves_per_second
+                } else {
+                    f64::INFINITY
+                };
+
+                // Format time remaining in a human-readable way
+                let time_remaining = if estimated_remaining_secs.is_finite() {
+                    Self::format_duration(estimated_remaining_secs)
+                } else {
+                    "unknown".to_string()
+                };
+
+                info!(
+                    "Progress: {}/{} leaves ({:.1}%) | Rate: {:.1} leaves/sec | Elapsed: {} | Remaining: {}",
+                    processed,
+                    total_leaves,
+                    (processed as f64 / total_leaves as f64) * 100.0,
+                    leaves_per_second,
+                    Self::format_duration(elapsed.as_secs_f64()),
+                    time_remaining
+                );
+
+                last_update = now;
+            }
         }
+
+        let total_duration = start_time.elapsed();
+        info!(
+            "Completed appending {} leaves in {} ({:.1} leaves/sec)",
+            total_leaves,
+            Self::format_duration(total_duration.as_secs_f64()),
+            total_leaves as f64 / total_duration.as_secs_f64()
+        );
+
         Ok(append_results)
+    }
+
+    // Helper function to format duration in a human-readable way
+    fn format_duration(seconds: f64) -> String {
+        if seconds < 60.0 {
+            return format!("{:.1}s", seconds);
+        }
+
+        let minutes = (seconds / 60.0).floor();
+        let remaining_seconds = seconds - (minutes * 60.0);
+
+        if minutes < 60.0 {
+            return format!("{}m {:.0}s", minutes as u64, remaining_seconds);
+        }
+
+        let hours = (minutes / 60.0).floor();
+        let remaining_minutes = minutes - (hours * 60.0);
+
+        format!("{}h {}m", hours as u64, remaining_minutes as u64)
     }
 
     /// Append a single leaf to the MMR and the reverse index.

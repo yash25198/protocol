@@ -14,7 +14,7 @@ members = [
   "crates/rift-program",
   "crates/sol-types",
   "test-data", "bin/sol-utils", "crates/bitcoin-data-engine", "bin/market-maker",
-  # "integration-tests"
+  "integration-tests"
   ]
 
 resolver = "2"

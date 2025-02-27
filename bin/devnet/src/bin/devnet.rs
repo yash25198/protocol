@@ -3,6 +3,7 @@ use devnet::evm_devnet::ForkConfig;
 use devnet::RiftDevnet;
 use eyre::Result;
 use log::info;
+use rift_sdk::DatabaseLocation;
 use tokio::signal;
 
 #[derive(Parser)]
@@ -41,6 +42,7 @@ async fn main() -> Result<()> {
         args.evm_address, // an optional EVM address to fund
         None,
         fork_config,
+        /*data_engine_db_location=*/ DatabaseLocation::InMemory,
     )
     .await?;
 

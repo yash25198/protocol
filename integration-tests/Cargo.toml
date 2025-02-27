@@ -13,3 +13,6 @@ path = "src/lib.rs"
 tokio.workspace = true
 data-engine.workspace = true
 devnet.workspace = true
+tempfile.workspace = true
+rift-sdk.workspace = true
+bitcoin-light-client-core.workspace = true
