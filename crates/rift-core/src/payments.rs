@@ -7,6 +7,25 @@ use sol_types::Types::DepositVault;
 const OP_RETURN_CODE: u8 = 0x6a;
 const OP_PUSHBYTES_32: u8 = 0x20;
 
+// Remove padding from scriptPubKey based on the script type, this padding is added by the contract
+pub fn remove_script_pubkey_contract_padding(
+    script_pubkey: &[u8; 25],
+) -> Result<&[u8], &'static str> {
+    match script_pubkey[0] {
+        // P2PKH
+        0x76 => Ok(&script_pubkey[0..25]),
+
+        // P2SH
+        0xa9 => Ok(&script_pubkey[0..23]),
+
+        // P2WPKH:
+        0x00 => Ok(&script_pubkey[0..22]),
+
+        // Unknown script type
+        _ => Err("Unrecognized scriptPubKey type"),
+    }
+}
+
 // Parses a transaction (with segwit data removed), and asserts that for every lp passed,
 // there exists a UTXO in the transaction that matches the expected sats and script pub key.
 pub fn validate_bitcoin_payment(
@@ -31,7 +50,8 @@ pub fn validate_bitcoin_payment(
     // [4] check txn recipient matches on-chain LP wallet
     assert_eq!(
         tx_out.script_pubkey.as_bytes(),
-        reserved_vault.btcPayoutScriptPubKey
+        remove_script_pubkey_contract_padding(&reserved_vault.btcPayoutScriptPubKey.into())
+            .expect("Failed to remove scriptPubKey padding")
     );
 
     // [5] the second output in the bitcoin transaction is ALWAYS the OP_RETURN output inscribing the vault commitment

@@ -15,6 +15,8 @@ import {Events} from "./libraries/Events.sol";
 import {VaultLib} from "./libraries/VaultLib.sol";
 import {RiftUtils} from "./libraries/RiftUtils.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
+import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
+
 
 /**
  * @title RiftExchange
@@ -281,7 +283,8 @@ contract RiftExchange is BitcoinLightClient {
     ) internal view returns (Types.DepositVault memory, bytes32) {
         if (params.depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
         if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
-        if (!VaultLib.validateP2WPKHScriptPubKey(params.btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
+        if (!LightClientVerificationLib.validateScriptPubKey(params.btcPayoutScriptPubKey))
+            revert Errors.InvalidScriptPubKey();
 
         if (!proveBlockInclusion(params.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks)) {
             revert Errors.InvalidBlockInclusionProof();

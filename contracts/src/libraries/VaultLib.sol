@@ -16,11 +16,6 @@ library VaultLib {
         return EfficientHashLib.hash(abi.encode(swap));
     }
 
-    /// @notice Validates that a scriptPubKey follows the P2WPKH format (OP_0(0x00) + OP_PUSHBYTES_20(0x14) + <20-byte-pubkey-hash>)
-    function validateP2WPKHScriptPubKey(bytes22 scriptPubKey) internal pure returns (bool) {
-        return scriptPubKey[0] == 0x00 && scriptPubKey[1] == 0x14;
-    }
-
     function validateDepositVaultCommitment(
         Types.DepositVault calldata vault,
         bytes32[] storage vaultCommitments

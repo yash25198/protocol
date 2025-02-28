@@ -494,16 +494,16 @@ mod tests {
         println!("Light client height (queried): {:?}", light_client_height);
         println!("Mmr root (queried): {:?}", mmr_root);
 
+        let maker_btc_wallet_script_pubkey = maker_btc_wallet.get_p2wpkh_script();
+
+        let padded_script = right_pad_to_25(maker_btc_wallet_script_pubkey.as_bytes());
+
         let deposit_params = DepositLiquidityParams {
             depositOwnerAddress: maker_evm_address,
             specifiedPayoutAddress: taker_evm_address,
             depositAmount: deposit_amount,
             expectedSats: expected_sats,
-            btcPayoutScriptPubKey: maker_btc_wallet
-                .get_p2wpkh_script()
-                .as_bytes()
-                .try_into()
-                .unwrap(),
+            btcPayoutScriptPubKey: padded_script.into(),
             depositSalt: [0x44; 32].into(), // this can be anything
             confirmationBlocks: 2, // require 2 confirmations (1 block to mine + 1 additional)
             // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
@@ -1200,4 +1200,11 @@ mod tests {
         // If all steps got here w/o revert, we assume success:
         println!("All steps in the end-to-end flow completed successfully!");
     }
+}
+
+fn right_pad_to_25(input: &[u8]) -> [u8; 25] {
+    let mut padded = [0u8; 25];
+    let copy_len = input.len().min(25);
+    padded[..copy_len].copy_from_slice(&input[..copy_len]);
+    padded
 }

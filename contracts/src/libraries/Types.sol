@@ -28,7 +28,7 @@ library Types {
         // expectedSats / depositAmount = BTC/USD exchange rate set by the maker
         uint64 expectedSats;
         // this is the bitcoin script for the maker to receive their BTC
-        bytes22 btcPayoutScriptPubKey;
+        bytes25 btcPayoutScriptPubKey;
         address specifiedPayoutAddress;
         address ownerAddress;
         bytes32 salt;
@@ -131,7 +131,7 @@ library Types {
         address specifiedPayoutAddress;
         uint256 depositAmount;
         uint64 expectedSats;
-        bytes22 btcPayoutScriptPubKey;
+        bytes25 btcPayoutScriptPubKey;
         bytes32 depositSalt;
         uint8 confirmationBlocks;
         Types.BlockLeaf safeBlockLeaf;
