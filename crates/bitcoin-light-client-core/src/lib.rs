@@ -281,10 +281,8 @@ impl ChainTransition {
             new_mmr.append(&leaf.hash::<H>());
         }
 
-        // [11] Compress the parent leaf and new leaves
-        let mut all_leaves = vec![self.parent.leaf];
-        all_leaves.extend(new_leaves);
-        let compressed_leaves: Vec<u8> = all_leaves.compress();
+        // [11] Only include new leaves
+        let compressed_leaves: Vec<u8> = new_leaves.compress();
 
         // [12] Compute the new leaves commitment
         let new_leaves_commitment = H::hash(&compressed_leaves);
@@ -294,7 +292,7 @@ impl ChainTransition {
             previousMmrRoot: self.current_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
             compressedLeavesCommitment: new_leaves_commitment.into(),
-            tipBlockLeaf: (*all_leaves.last().expect("New leaves should not be empty")).into(),
+            tipBlockLeaf: (*new_leaves.last().expect("New leaves should not be empty")).into(),
         };
 
         if include_auxiliary_data {
