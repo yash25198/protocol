@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use clap::Parser;
 use prettytable::{row, Table};
-use rift_sdk::mmr::IndexedMMR;
+use rift_sdk::indexed_mmr::IndexedMMR;
 use rift_sdk::{format_duration, DatabaseLocation, Proof, ProofGeneratorType, RiftProofGenerator};
 
 use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS};

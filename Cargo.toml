@@ -54,7 +54,6 @@ sp1-build = "4.0.1"
 crypto-bigint = "0.5.5"
 tiny-keccak = "2.0.2"
 sha2 = "0.10.8"
-# secp256k1 = "0.29.1"
 
 bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1", default-features = false}
 accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "3b2c846edee5db7917fc4a0f548d28658f559355", features = ["all"] }
@@ -101,6 +100,3 @@ crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag 
 sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0-rc.3" }
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0-rc.3" }
 bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1" }
-# secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.29.1-sp1-4.0.0-rc.3" }
-
-

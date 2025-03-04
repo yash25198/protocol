@@ -1,7 +1,8 @@
 pub mod bindings;
 pub mod bitcoin_utils;
+pub mod checkpoint_mmr;
 mod errors;
-pub mod mmr;
+pub mod indexed_mmr;
 pub mod txn_builder;
 
 use alloy::providers::{ProviderBuilder, WsConnect};

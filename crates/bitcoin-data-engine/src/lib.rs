@@ -71,7 +71,7 @@ use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, ChainTipStatus};
 
 use hex;
-use rift_sdk::mmr::IndexedMMR;
+use rift_sdk::indexed_mmr::IndexedMMR;
 use rift_sdk::DatabaseLocation; // assumed to be defined in your code base
 
 /// Our async Bitcoin Data Engine.

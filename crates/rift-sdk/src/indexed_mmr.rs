@@ -149,19 +149,18 @@ pub async fn bag_peaks<H: LeafHasher>(client_mmr: &ClientMMR) -> Result<LeafDige
 // ReverseIndex: a separate key prefix "revIndex:..." for (leaf_hash -> { index, data })
 // -----------------------------------------------------------------------------
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockTreeValue {
-    parent_leaf_hash: LeafDigest,
+struct ReverseIndexValue {
     element_index: usize,
     leaf_data: BlockLeaf,
 }
 
 #[derive(Debug)]
-struct BlockTree {
+struct ReverseIndex {
     store: Arc<dyn Store + Send + Sync>,
     key_prefix: String,
 }
 
-impl BlockTree {
+impl ReverseIndex {
     fn new(store: Arc<dyn Store + Send + Sync>, key_prefix: &str) -> Self {
         Self {
             store,
@@ -175,7 +174,6 @@ impl BlockTree {
 
     async fn insert(
         &self,
-        parent_leaf_hash: &LeafDigest,
         leaf_hash: &LeafDigest,
         element_index: usize,
         leaf_data: &BlockLeaf,
@@ -183,8 +181,7 @@ impl BlockTree {
         let leaf_hash_hex = digest_to_hex(leaf_hash);
         let key = self.make_key(&leaf_hash_hex);
 
-        let val_obj = BlockTreeValue {
-            parent_leaf_hash: *parent_leaf_hash,
+        let val_obj = ReverseIndexValue {
             element_index,
             leaf_data: *leaf_data,
         };
@@ -198,7 +195,7 @@ impl BlockTree {
         Ok(())
     }
 
-    async fn get_by_hash(&self, leaf_digest: &LeafDigest) -> Result<Option<BlockTreeValue>> {
+    async fn get_by_hash(&self, leaf_digest: &LeafDigest) -> Result<Option<ReverseIndexValue>> {
         let leaf_hash_hex = digest_to_hex(leaf_digest);
         let key = self.make_key(&leaf_hash_hex);
 
@@ -209,7 +206,7 @@ impl BlockTree {
             .map_err(|e| RiftSdkError::StoreError(format!("Store get error: {e}")))?;
 
         if let Some(serialized) = val_opt {
-            let parsed: BlockTreeValue = serde_json::from_str(&serialized)
+            let parsed: ReverseIndexValue = serde_json::from_str(&serialized)
                 .map_err(|e| RiftSdkError::StoreError(format!("Deserialize error: {e}")))?;
             Ok(Some(parsed))
         } else {
@@ -239,7 +236,7 @@ impl BlockTree {
 #[derive(Debug)]
 pub struct IndexedMMR<H: LeafHasher> {
     client_mmr: ClientMMR,                 // uses Keccak internally for MMR ops
-    block_tree: BlockTree,                 // separate prefix
+    reverse_index: ReverseIndex,           // separate prefix
     _phantom: std::marker::PhantomData<H>, // we never store H itself, only use it generically
 }
 
@@ -292,11 +289,11 @@ impl<H: LeafHasher> IndexedMMR<H> {
         let client_mmr = ClientMMR::new(store.clone(), mmr_hasher, Some("mmr".to_string()));
 
         // 4) Build the reverse index
-        let block_tree = BlockTree::new(store.clone(), "revIndex:");
+        let reverse_index = ReverseIndex::new(store.clone(), "revIndex:");
 
         Ok(Self {
             client_mmr,
-            block_tree,
+            reverse_index,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -340,7 +337,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
             .await
             .map_err(|e| RiftSdkError::MMRError(format!("Failed to rewind: {e}")))?;
 
-        self.block_tree.delete_many(pruned_leaf_hashes).await?;
+        self.reverse_index.delete_many(pruned_leaf_hashes).await?;
         Ok(())
     }
 
@@ -365,7 +362,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
                 .await
                 .map_err(|e| RiftSdkError::AppendLeafError(e.to_string()))?;
 
-            self.block_tree
+            self.reverse_index
                 .insert(&leaf_hash, append_res.element_index, leaf)
                 .await?;
             append_results.push(append_res);
@@ -483,7 +480,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
         &self,
         leaf_hash: &LeafDigest,
     ) -> Result<Option<(usize, BlockLeaf)>> {
-        let val_opt = self.block_tree.get_by_hash(leaf_hash).await?;
+        let val_opt = self.reverse_index.get_by_hash(leaf_hash).await?;
         Ok(val_opt.map(|v| (v.element_index, v.leaf_data)))
     }
 
@@ -515,7 +512,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
 
         // Look up the leaf data in the reverse index
         // if it doesn't exist here, something is wrong so error out
-        let block_tree = match self.block_tree.get_by_hash(&leaf_hash).await? {
+        let reverse_index = match self.reverse_index.get_by_hash(&leaf_hash).await? {
             Some(data) => data,
             None => {
                 return Err(RiftSdkError::MMRError(
@@ -524,7 +521,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
             }
         };
 
-        Ok(Some(block_tree.leaf_data))
+        Ok(Some(reverse_index.leaf_data))
     }
 
     /// Return the internal accumulators MMR if needed.

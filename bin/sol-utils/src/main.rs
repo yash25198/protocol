@@ -18,8 +18,10 @@ use bitcoin_light_client_core::{
 use clap::{Parser, Subcommand};
 
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
-use rift_sdk::mmr::{client_mmr_proof_to_circuit_mmr_proof, client_mmr_to_root, digest_to_hex};
-use rift_sdk::{mmr::IndexedMMR, DatabaseLocation};
+use rift_sdk::indexed_mmr::{
+    client_mmr_proof_to_circuit_mmr_proof, client_mmr_to_root, digest_to_hex,
+};
+use rift_sdk::{indexed_mmr::IndexedMMR, DatabaseLocation};
 
 const BLOCK_HASH_SEED: [u8; 32] =
     hex!("ceeca7c42d523ea6b5183e5922b966e85d1dab847b051e18ffd3611763726626");

@@ -338,7 +338,7 @@ mod tests {
     use rift_sdk::bindings::non_artifacted_types::Types::MMRProof;
     use rift_sdk::bindings::non_artifacted_types::Types::{BlockLeaf, ProofPublicInput};
     use rift_sdk::bindings::Types::BlockProofParams;
-    use rift_sdk::mmr::client_mmr_proof_to_circuit_mmr_proof;
+    use rift_sdk::indexed_mmr::client_mmr_proof_to_circuit_mmr_proof;
     use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
     use rift_sdk::{
         create_websocket_provider, get_retarget_height_from_block_height, DatabaseLocation,
@@ -748,7 +748,11 @@ mod tests {
                  */
 
         let (parent_leaf, parent_leaf_index) = {
-            let mmr = devnet.contract_data_engine.indexed_mmr.read().await;
+            let mmr = devnet
+                .contract_data_engine
+                .checkpointed_block_tree
+                .read()
+                .await;
             let leaf_index = mmr.get_leaf_count().await.unwrap() - 1;
             let leaf = mmr
                 .get_leaf_by_leaf_index(leaf_index)
@@ -780,7 +784,7 @@ mod tests {
         .unwrap();
         let parent_inclusion_proof = devnet
             .contract_data_engine
-            .indexed_mmr
+            .checkpointed_block_tree
             .read()
             .await
             .get_circuit_proof(parent_leaf_index, None)
@@ -789,7 +793,7 @@ mod tests {
 
         let parent_leaf_peaks = devnet
             .contract_data_engine
-            .indexed_mmr
+            .checkpointed_block_tree
             .read()
             .await
             .get_peaks(Some(map_leaf_index_to_element_index(parent_leaf_index) + 1))
@@ -829,7 +833,7 @@ mod tests {
         .unwrap();
         let parent_retarget_inclusion_proof = devnet
             .contract_data_engine
-            .indexed_mmr
+            .checkpointed_block_tree
             .read()
             .await
             .get_circuit_proof(parent_retarget_leaf_index as usize, None)

@@ -15,7 +15,7 @@ use rift_sdk::bindings::{
     non_artifacted_types::Types::{SwapUpdateContext, VaultUpdateContext},
     Types::DepositVault,
 };
-use rift_sdk::mmr::IndexedMMR;
+use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::{bindings::RiftExchange, DatabaseLocation};
 
 use std::{path::PathBuf, str::FromStr, sync::Arc};
@@ -33,7 +33,7 @@ use crate::db::{
 use crate::models::OTCSwap;
 
 pub struct DataEngine {
-    pub indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    pub checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
     // New field to track if the event listener has been started already.
     server_started: Arc<AtomicBool>,
@@ -46,7 +46,9 @@ impl DataEngine {
         database_location: &DatabaseLocation,
         checkpoint_leaves: Vec<BlockLeaf>,
     ) -> Result<Self> {
-        let indexed_mmr = Arc::new(RwLock::new(IndexedMMR::open(database_location).await?));
+        let checkpointed_block_tree = Arc::new(RwLock::new(
+            CheckpointedBlockTree::open(database_location).await?,
+        ));
         let swap_database_connection = Arc::new(match database_location.clone() {
             DatabaseLocation::InMemory => tokio_rusqlite::Connection::open_in_memory().await?,
             DatabaseLocation::Directory(path) => {
@@ -56,12 +58,10 @@ impl DataEngine {
 
         setup_swaps_database(&swap_database_connection).await?;
 
-        Self::conditionally_seed_mmr(&indexed_mmr, checkpoint_leaves).await?;
-
-        println!("DataEngine seeded with checkpoint leaves.");
+        Self::conditionally_seed_mmr(&checkpointed_block_tree, checkpoint_leaves).await?;
 
         Ok(Self {
-            indexed_mmr,
+            checkpointed_block_tree,
             swap_database_connection,
             server_started: Arc::new(AtomicBool::new(false)),
             event_listener_handle: None,
@@ -100,14 +100,14 @@ impl DataEngine {
             return Err(eyre::eyre!("Server already started"));
         }
 
-        let indexed_mmr_clone = self.indexed_mmr.clone();
+        let checkpointed_block_tree_clone = self.checkpointed_block_tree.clone();
         let swap_database_connection_clone = self.swap_database_connection.clone();
 
         let handle = tokio::spawn(async move {
             listen_for_events(
                 provider,
                 &swap_database_connection_clone,
-                indexed_mmr_clone,
+                checkpointed_block_tree_clone,
                 &rift_exchange_address,
                 deploy_block_number,
             )
@@ -121,15 +121,24 @@ impl DataEngine {
     }
 
     async fn conditionally_seed_mmr(
-        indexed_mmr: &Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+        checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
         checkpoint_leaves: Vec<BlockLeaf>,
     ) -> Result<()> {
-        if indexed_mmr.read().await.get_leaf_count().await? == 0 && !checkpoint_leaves.is_empty() {
-            indexed_mmr
+        if checkpointed_block_tree
+            .read()
+            .await
+            .get_leaf_count()
+            .await?
+            == 0
+            && !checkpoint_leaves.is_empty()
+        {
+            checkpointed_block_tree
                 .write()
                 .await
-                .batch_append(&checkpoint_leaves)
+                .create_seed_checkpoint(&checkpoint_leaves)
                 .await?;
+
+            println!("DataEngine seeded with checkpoint leaves.");
         }
         Ok(())
     }
@@ -159,13 +168,17 @@ impl DataEngine {
 
     // get's the tip of the MMR, and returns a proof of the tip
     pub async fn get_tip_proof(&self) -> Result<(BlockLeaf, Vec<Digest>, Vec<Digest>)> {
-        let mmr = self.indexed_mmr.read().await;
-        let leaves_count = mmr.client_mmr().leaves_count.get().await?;
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        let leaves_count = checkpointed_block_tree.get_leaf_count().await?;
         let leaf_index = leaves_count - 1;
-        let leaf = mmr.get_leaf_by_leaf_index(leaf_index).await?;
+        let leaf = checkpointed_block_tree
+            .get_leaf_by_leaf_index(leaf_index)
+            .await?;
         match leaf {
             Some(leaf) => {
-                let proof = mmr.get_circuit_proof(leaf_index, None).await?;
+                let proof = checkpointed_block_tree
+                    .get_circuit_proof(leaf_index, None)
+                    .await?;
                 let siblings = proof.siblings;
                 let peaks = proof.peaks;
                 Ok((leaf, siblings, peaks))
@@ -176,18 +189,27 @@ impl DataEngine {
 
     // Delegate method that provides read access to the mmr
     pub async fn get_leaf_count(&self) -> Result<usize> {
-        let mmr = self.indexed_mmr.read().await;
-        mmr.get_leaf_count().await.map_err(|e| eyre::eyre!(e))
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        checkpointed_block_tree
+            .get_leaf_count()
+            .await
+            .map_err(|e| eyre::eyre!(e))
     }
 
     pub async fn get_mmr_root(&self) -> Result<Digest> {
-        let mmr = self.indexed_mmr.read().await;
-        mmr.get_root().await.map_err(|e| eyre::eyre!(e))
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        checkpointed_block_tree
+            .get_root()
+            .await
+            .map_err(|e| eyre::eyre!(e))
     }
 
     pub async fn get_mmr_bagged_peak(&self) -> Result<Digest> {
-        let mmr = self.indexed_mmr.read().await;
-        mmr.get_bagged_peak().await.map_err(|e| eyre::eyre!(e))
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        checkpointed_block_tree
+            .get_bagged_peak()
+            .await
+            .map_err(|e| eyre::eyre!(e))
     }
 }
 
@@ -201,7 +223,7 @@ fn get_qualified_swaps_database_path(database_location: String) -> String {
 pub async fn listen_for_events(
     provider: Arc<dyn Provider<PubSubFrontend>>,
     db_conn: &Arc<tokio_rusqlite::Connection>,
-    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     rift_exchange_address: &str,
     deploy_block_number: u64,
 ) -> Result<()> {
@@ -226,7 +248,7 @@ pub async fn listen_for_events(
 
     // Process historical logs
     for log in historical_logs.iter() {
-        process_log(log, db_conn, &indexed_mmr).await?;
+        process_log(log, db_conn, &checkpointed_block_tree).await?;
     }
 
     info!("Processed {} historical logs", historical_logs.len());
@@ -256,7 +278,7 @@ pub async fn listen_for_events(
 
         // Process gap logs
         for log in gap_logs {
-            process_log(&log, db_conn, &indexed_mmr).await?;
+            process_log(&log, db_conn, &checkpointed_block_tree).await?;
         }
     }
 
@@ -275,7 +297,7 @@ pub async fn listen_for_events(
 
     // Now process the subscription stream
     while let Some(log) = stream.next().await {
-        process_log(&log, db_conn, &indexed_mmr).await?;
+        process_log(&log, db_conn, &checkpointed_block_tree).await?;
     }
 
     println!("Subscription stream closed");
@@ -287,7 +309,7 @@ pub async fn listen_for_events(
 async fn process_log(
     log: &Log,
     db_conn: &Arc<tokio_rusqlite::Connection>,
-    indexed_mmr: &Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
 ) -> Result<()> {
     info!("Processing log: {:?}", log);
 
@@ -304,7 +326,7 @@ async fn process_log(
             handle_swap_updated_event(log, db_conn).await?;
         }
         RiftExchange::BitcoinLightClientUpdated::SIGNATURE_HASH => {
-            handle_bitcoin_light_client_updated_event(log, indexed_mmr.clone()).await?;
+            handle_bitcoin_light_client_updated_event(log, checkpointed_block_tree.clone()).await?;
         }
         _ => {
             warn!("Unknown event topic");
@@ -433,7 +455,7 @@ async fn handle_swap_updated_event(
 
 async fn handle_bitcoin_light_client_updated_event(
     log: &Log,
-    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
 ) -> Result<()> {
     info!("Received BitcoinLightClientUpdated event");
 
@@ -446,15 +468,15 @@ async fn handle_bitcoin_light_client_updated_event(
     let new_mmr_root = block_tree_data.newMmrRoot.0;
     let compressed_block_leaves = block_tree_data.compressedBlockLeaves.0.to_vec();
     let block_leaves = decompress_block_leaves(&compressed_block_leaves);
-    // TODO: Reorg the MMR based on the prior root
 
     {
-        let mut mmr = indexed_mmr.write().await;
-        mmr.append_or_reorg_based_on_parent(&block_leaves)
+        let mut checkpointed_block_tree = checkpointed_block_tree.write().await;
+        checkpointed_block_tree
+            .update_from_checkpoint(&prior_mmr_root, &block_leaves)
             .await
             .map_err(|e| eyre::eyre!("append_or_reorg_based_on_parent failed: {:?}", e))?;
     }
-    let root = indexed_mmr
+    let root = checkpointed_block_tree
         .read()
         .await
         .get_root()
