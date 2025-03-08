@@ -352,6 +352,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
         let update_interval = std::time::Duration::from_secs(2); // Update stats every 2 seconds
         let mut last_update = start_time;
 
+        // TODO: Update the underlying accumulators library to support batch operations
         for (i, leaf) in leaves.iter().enumerate() {
             let leaf_hash = leaf.hash::<H>();
             let leaf_hash_hex = digest_to_hex(&leaf_hash);

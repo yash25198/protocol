@@ -522,7 +522,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         exchange.payoutToFeeRouter();
         assertEq(
-            mockToken.balanceOf(exchange.FEE_ROUTER_ADDRESS()),
+            mockToken.balanceOf(exchange.feeRouterAddress()),
             feeRouterBalancePrePayout,
             "Fee router should have received all fees"
         );
