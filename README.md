@@ -2,10 +2,10 @@
 Trustless cross-chain swap protocol for Bitcoin and Ethereum
 
 #### Highlights:
-- [`bitcoin-light-client-core`](./crates/bitcoin-light-client-core/): Circuit validating Bitcoin Proof of Work and the longest chain within an MMR-based Light Client.
+- [`bitcoin-light-client-core`](./crates/bitcoin-light-client-core/): Circuit validating Bitcoin consensus within an MMR-based light client.
 - [`rift-core`](./crates/rift-core/): Circuit handling Bitcoin<>Ethereum order settlement and light client state updates.
 - [`contracts`](./contracts): Solidity smart contracts for settling orders, and maintaining the light client state.
-- [`hypernode`](./bin/hypernode): Bitcoin and Ethereum indexer that generates swap proofs and detects and removes orphan blocks submitted to the light client.
+- [`hypernode`](./bin/hypernode): Bitcoin and Ethereum indexer that generates swap proofs, settles challenged proofs, and detects and removes orphan blocks submitted to the light client.
 
 ## Dependencies
 
