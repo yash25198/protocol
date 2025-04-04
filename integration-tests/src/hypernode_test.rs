@@ -32,8 +32,6 @@ use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
 async fn test_hypernode_simple_swap() {
     setup_test_tracing();
     // ---1) Spin up devnet with default config---
-    //    Interactive = false => no local HTTP servers / Docker containers
-    //    No pre-funded EVM or Bitcoin address => we can do that ourselves below
 
     let maker = MultichainAccount::new(1);
     let taker = MultichainAccount::new(2);
