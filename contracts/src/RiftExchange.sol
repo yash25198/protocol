@@ -2,7 +2,6 @@
 
 pragma solidity =0.8.28;
 
-import {console} from "forge-std/src/console.sol";
 import {ISP1Verifier} from "sp1-contracts/contracts/src/ISP1Verifier.sol";
 import {IERC20} from "@openzeppelin-contracts/interfaces/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin-contracts/interfaces/IERC20Metadata.sol";
@@ -125,9 +124,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     function withdrawLiquidity(Types.DepositVault calldata vault) external {
         VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
         if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
-        if (
-            block.timestamp < vault.depositTimestamp + RiftUtils.calculateDepositLockupPeriod(vault.confirmationBlocks)
-        ) {
+        if (block.timestamp < vault.depositUnlockTimestamp) {
             revert Errors.DepositStillLocked();
         }
 
@@ -168,14 +165,16 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         );
 
         bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
-        _verifyZeroKnowledgeProof(
-            Types.ProofType.Combined,
-            swapPublicInputs,
-            Types.LightClientPublicInput({
-                previousMmrRoot: blockProofParams.priorMmrRoot,
-                newMmrRoot: blockProofParams.newMmrRoot,
-                compressedLeavesCommitment: compressedLeavesCommitment,
-                tipBlockLeaf: blockProofParams.tipBlockLeaf
+        verifyZkProof(
+            Types.ProofPublicInput({
+                proofType: Types.ProofType.Combined,
+                swaps: swapPublicInputs,
+                lightClient: Types.LightClientPublicInput({
+                    previousMmrRoot: blockProofParams.priorMmrRoot,
+                    newMmrRoot: blockProofParams.newMmrRoot,
+                    compressedLeavesCommitment: compressedLeavesCommitment,
+                    tipBlockLeaf: blockProofParams.tipBlockLeaf
+                })
             }),
             proof
         );
@@ -196,8 +195,14 @@ contract RiftExchange is BitcoinLightClient, Ownable {
             overwriteSwaps
         );
 
-        _verifyZeroKnowledgeProof(Types.ProofType.SwapOnly, swapPublicInputs, getNullLightClientPublicInput(), proof);
-
+        verifyZkProof(
+            Types.ProofPublicInput({
+                proofType: Types.ProofType.SwapOnly,
+                swaps: swapPublicInputs,
+                lightClient: getNullLightClientPublicInput()
+            }),
+            proof
+        );
         emit Events.SwapsUpdated(swaps, Types.SwapUpdateContext.Created);
     }
 
@@ -216,14 +221,10 @@ contract RiftExchange is BitcoinLightClient, Ownable {
                 vaultCommitments
             );
             if (depositVaultCommitment != paramsArray[i].swap.depositVaultCommitment) {
-                revert Errors.InvalidVaultCommitment();
+                revert Errors.InvalidVaultCommitment(paramsArray[i].swap.depositVaultCommitment);
             }
 
-            Types.BlockLeaf memory swapBlockLeaf = Types.BlockLeaf({
-                blockHash: paramsArray[i].swap.swapBitcoinBlockHash,
-                height: paramsArray[i].swapBlockHeight,
-                cumulativeChainwork: paramsArray[i].swapBlockChainwork
-            });
+            Types.BlockLeaf memory swapBlockLeaf = paramsArray[i].swap.swapBitcoinBlockLeaf;
 
             // TODO: consider how to optimize this so this is only called the minimum amount for a given collection of releases
             _ensureBitcoinInclusion(
@@ -256,7 +257,6 @@ contract RiftExchange is BitcoinLightClient, Ownable {
             updatedSwaps[i] = updatedSwap;
         }
 
-        // TODO: Does order of events matter here?
         emit Events.SwapsUpdated(updatedSwaps, Types.SwapUpdateContext.Complete);
         emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Release);
     }
@@ -264,27 +264,25 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     function updateLightClient(Types.BlockProofParams calldata blockProofParams, bytes calldata proof) external {
         bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
 
-        VERIFIER.verifyProof(
-            CIRCUIT_VERIFICATION_KEY,
-            abi.encode(
-                Types.ProofPublicInput({
-                    proofType: Types.ProofType.LightClientOnly,
-                    swaps: new Types.SwapPublicInput[](0),
-                    lightClient: Types.LightClientPublicInput({
-                        previousMmrRoot: blockProofParams.priorMmrRoot,
-                        newMmrRoot: blockProofParams.newMmrRoot,
-                        compressedLeavesCommitment: compressedLeavesCommitment,
-                        tipBlockLeaf: blockProofParams.tipBlockLeaf
-                    })
-                })
-            ),
-            proof
-        );
         _updateRoot(
             blockProofParams.priorMmrRoot,
             blockProofParams.newMmrRoot,
             blockProofParams.tipBlockLeaf,
             blockProofParams.compressedBlockLeaves
+        );
+
+        verifyZkProof(
+            Types.ProofPublicInput({
+                proofType: Types.ProofType.LightClientOnly,
+                swaps: new Types.SwapPublicInput[](0),
+                lightClient: Types.LightClientPublicInput({
+                    previousMmrRoot: blockProofParams.priorMmrRoot,
+                    newMmrRoot: blockProofParams.newMmrRoot,
+                    compressedLeavesCommitment: compressedLeavesCommitment,
+                    tipBlockLeaf: blockProofParams.tipBlockLeaf
+                })
+            }),
+            proof
         );
     }
 
@@ -299,6 +297,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     ) internal view returns (Types.DepositVault memory, bytes32) {
         if (params.depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
         if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
+        if (params.confirmationBlocks < Constants.MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
         if (!LightClientVerificationLib.validateScriptPubKey(params.btcPayoutScriptPubKey))
             revert Errors.InvalidScriptPubKey();
 
@@ -311,6 +310,9 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,
             depositTimestamp: uint64(block.timestamp),
+            depositUnlockTimestamp: uint64(
+                block.timestamp + RiftUtils.calculateDepositLockupPeriod(params.confirmationBlocks)
+            ),
             depositAmount: params.depositAmount - depositFee,
             depositFee: depositFee,
             expectedSats: params.expectedSats,
@@ -328,8 +330,6 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
         return (vault, VaultLib.hashDepositVault(vault));
     }
-
-    // TODO: add function to do pure block updates
 
     /// @notice Internal function to finalize a deposit
     function _finalizeDeposit(Types.DepositVault memory vault) internal {
@@ -383,7 +383,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
             swaps[i] = Types.ProposedSwap({
                 swapIndex: swapIndex,
-                swapBitcoinBlockHash: params.swapBitcoinBlockLeaf.blockHash,
+                swapBitcoinBlockLeaf: params.swapBitcoinBlockLeaf,
                 confirmationBlocks: params.vault.confirmationBlocks,
                 liquidityUnlockTimestamp: uint64(
                     block.timestamp +
@@ -409,23 +409,9 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         }
     }
 
-    function _verifyZeroKnowledgeProof(
-        Types.ProofType proofType,
-        Types.SwapPublicInput[] memory swapPublicInputs,
-        Types.LightClientPublicInput memory lightClientPublicInput,
-        bytes calldata proof
-    ) internal view {
-        VERIFIER.verifyProof(
-            CIRCUIT_VERIFICATION_KEY,
-            abi.encode(
-                Types.ProofPublicInput({
-                    proofType: proofType,
-                    swaps: swapPublicInputs,
-                    lightClient: lightClientPublicInput
-                })
-            ),
-            proof
-        );
+    // Convenience function to verify a rift proof via eth_call
+    function verifyZkProof(Types.ProofPublicInput memory proofPublicInput, bytes calldata proof) public view {
+        VERIFIER.verifyProof(CIRCUIT_VERIFICATION_KEY, abi.encode(proofPublicInput), proof);
     }
 
     function getNullLightClientPublicInput() internal pure returns (Types.LightClientPublicInput memory) {
@@ -456,5 +442,11 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
     function getSwapCommitment(uint256 swapIndex) external view returns (bytes32) {
         return swapCommitments[swapIndex];
+    }
+
+    function serializeLightClientPublicInput(
+        Types.LightClientPublicInput memory input
+    ) external pure returns (bytes memory) {
+        return abi.encode(input);
     }
 }

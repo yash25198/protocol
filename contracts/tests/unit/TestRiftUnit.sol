@@ -68,6 +68,7 @@ contract RiftExchangeUnitTest is RiftTest {
             Types.DepositVault({
                 vaultIndex: vault.vaultIndex % maxValue,
                 depositTimestamp: vault.depositTimestamp % maxValue,
+                depositUnlockTimestamp: vault.depositUnlockTimestamp % maxValue,
                 depositAmount: vault.depositAmount % maxValue,
                 depositFee: vault.depositFee % maxValue,
                 expectedSats: vault.expectedSats % maxValue,
@@ -475,8 +476,6 @@ contract RiftExchangeUnitTest is RiftTest {
         vm.recordLogs();
         Types.ReleaseLiquidityParams memory releaseLiquidityParams = Types.ReleaseLiquidityParams({
             swap: createdSwap,
-            swapBlockChainwork: swapMmrProof.blockLeaf.cumulativeChainwork,
-            swapBlockHeight: swapMmrProof.blockLeaf.height,
             bitcoinSwapBlockSiblings: swapMmrProof.siblings,
             bitcoinSwapBlockPeaks: swapMmrProof.peaks,
             utilizedVault: vault,
