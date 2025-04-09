@@ -39,3 +39,5 @@ futures-util = { workspace = true }
 bitcoincore-rpc-async = { workspace = true }
 serial_test = { workspace = true }
 once_cell = { workspace = true }
+test-data-utils = { workspace = true }
+crypto-bigint = { workspace = true }

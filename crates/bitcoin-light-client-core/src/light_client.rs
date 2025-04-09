@@ -16,6 +16,10 @@ impl Debug for Header {
 }
 
 impl Header {
+    pub fn new(bytes: &[u8; 80]) -> Self {
+        Header(*bytes)
+    }
+
     pub fn as_bytes(&self) -> &[u8; 80] {
         &self.0
     }
