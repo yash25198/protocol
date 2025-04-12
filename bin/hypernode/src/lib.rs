@@ -1,4 +1,5 @@
 pub mod release_watchtower;
+pub mod reorg_watchtower;
 pub mod swap_watchtower;
 pub mod txn_broadcast;
 
@@ -11,6 +12,7 @@ use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
 use eyre::Result;
 use release_watchtower::ReleaseWatchtower;
+use reorg_watchtower::ReorgWatchtower;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::{create_websocket_provider, create_websocket_wallet_provider, DatabaseLocation};
 use serde_json;
@@ -203,6 +205,18 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         &mut join_set,
     )
     .await?;
+
+    ReorgWatchtower::run(
+        bitcoin_data_engine.clone(),
+        contract_data_engine.clone(),
+        btc_rpc.clone(),
+        evm_rpc.clone(),
+        rift_exchange_address,
+        transaction_broadcaster.clone(),
+        args.btc_batch_rpc_size,
+        proof_generator.clone(),
+        &mut join_set,
+    );
 
     // Wait for one of the background threads to complete or fail. (Ideally never happens, but we want to crash the program if it does)
     handle_background_thread_result(join_set.join_next().await)
