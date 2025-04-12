@@ -193,7 +193,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         rift_exchange_address,
         transaction_broadcaster.clone(),
         args.btc_batch_rpc_size,
-        proof_generator,
+        proof_generator.clone(),
         &mut join_set,
     );
 
@@ -214,7 +214,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         rift_exchange_address,
         transaction_broadcaster.clone(),
         args.btc_batch_rpc_size,
-        proof_generator.clone(),
+        proof_generator,
         &mut join_set,
     );
 

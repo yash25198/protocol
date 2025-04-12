@@ -4,11 +4,13 @@ use alloy::{
     primitives::Address, providers::Provider, pubsub::PubSubFrontend,
     rpc::types::TransactionRequest,
 };
+use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoin_light_client_core::{
     hasher::{Digest, Keccak256Hasher},
     ChainTransition,
 };
 use bitcoincore_rpc_async::RpcApi;
+use data_engine::engine::ContractDataEngine;
 use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_sdk::{
     bitcoin_utils::AsyncBitcoinClient, checkpoint_mmr::CheckpointedBlockTree,
@@ -110,7 +112,8 @@ impl ReorgWatchtower {
 
         // Poll interval for checking reorgs
         // 30 seconds should be more than enough to detect reorgs
-        const POLL_INTERVAL: Duration = Duration::from_secs(30);
+        // made it 1 for testing
+        const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
         loop {
             match Self::check_and_handle_reorg(
@@ -271,7 +274,6 @@ impl ReorgWatchtower {
                 // Broadcast failure event
                 let _ = event_sender
                     .send(ReorgWatchtowerEvent::ReorgUpdateFailed { reason: error_msg });
-
                 Ok(false)
             }
 
@@ -284,6 +286,7 @@ impl ReorgWatchtower {
                     .send(ReorgWatchtowerEvent::ReorgUpdateFailed { reason: error_msg });
 
                 Ok(false)
+                // should also retry based on error
             }
         }
     }
